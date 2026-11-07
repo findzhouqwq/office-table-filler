@@ -38,6 +38,40 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 > 或需要“开着 Excel 实时刷新”时，安装 Office / WPS 后会自动启用 COM 引擎。
 > 工具会优先用 COM 引擎，失败时回退到直接读写。
 
+## 图形化安装程序（推荐）
+
+`installer/` 目录提供与常见 Windows 软件一致的**向导式图形安装程序**，
+全程无命令框（黑色控制台窗口）：
+
+- `installer/TableFiller-Setup.exe`：编译好的安装程序，双击即可（需先按下面的步骤生成）。
+- `installer/Install.vbs`：未编译时的等价入口，双击同样以无窗口方式启动安装向导。
+- `installer/build-setup.bat`：在 Windows 上把安装脚本编译成单文件 EXE。
+
+安装向导包含「欢迎 → 选择安装位置 → 附加任务 → 正在安装 → 完成」五个页面：
+
+| 功能 | 说明 |
+| --- | --- |
+| 自定义安装位置 | 默认 `%LOCALAPPDATA%\Programs\TableFiller`，可浏览选择其他目录；安装在当前用户下，无需管理员权限 |
+| 附加任务 | 可勾选创建**桌面快捷方式**、**开始菜单快捷方式**、**固定到任务栏** |
+| 自动下载程序本体 | 依次尝试 `ghfast.top` 镜像 → `gh-proxy.com` 镜像 → GitHub 官方，任一成功即继续 |
+| 自动准备 Python | 若未检测到 Python 3.10–3.13，自动下载 Python 3.12.8：华为云镜像 → 阿里云镜像 → Python 官方，按当前用户静默安装 |
+| 自动安装依赖 | 创建独立 `.venv`，pip 依次尝试清华 PyPI 镜像 → 阿里云 PyPI 镜像 → PyPI 官方 |
+| 卸载 | 「设置 → 应用」中卸载，或运行安装目录下的 `uninstall.ps1`，会清理快捷方式、任务栏固定项与注册表信息 |
+
+> 安装过程需要联网下载程序与依赖，首次安装依赖体积较大，请耐心等待进度条完成。
+
+### 生成安装程序 EXE
+
+在 Windows 上安装 PowerShell 5.1+ 后，双击或在命令行运行：
+
+```bat
+installer\build-setup.bat
+```
+
+脚本会自动安装 `ps2exe` 模块并生成 `installer\TableFiller-Setup.exe`
+（无控制台、带图标、版本 1.1.0.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
+可将 `installer\TableFiller.ico` 与 EXE 放在同一目录。
+
 ## 安装
 
 需要 Python 3.10+（推荐 3.11 / 3.12）。
@@ -104,6 +138,11 @@ office-table-filler/
 ├── make_samples.py         生成演示样例
 ├── requirements.txt
 ├── run.bat / build.bat
+├── installer/
+│   ├── TableFillerSetup.ps1  图形化安装向导（PowerShell + WinForms）
+│   ├── Install.vbs           无命令框启动安装向导
+│   ├── build-setup.bat       编译 TableFiller-Setup.exe
+│   └── TableFiller.ico       安装程序图标
 ├── app/
 │   ├── core/
 │   │   ├── spreadsheet.py   表格引擎（openpyxl / Excel COM）

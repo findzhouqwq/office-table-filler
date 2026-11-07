@@ -5,34 +5,61 @@ from __future__ import annotations
 import os
 import traceback
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QSettings, QThread, Signal
 from PySide6.QtWidgets import (QFileDialog, QMessageBox, QWidget,
                                QApplication)
 
 
+def app_settings() -> QSettings:
+    """Application-wide settings (last folders, window geometry)."""
+    return QSettings("TableFiller", "TableFiller")
+
+
+def _last_dir(key: str) -> str:
+    value = app_settings().value(f"paths/{key}", "")
+    return value if isinstance(value, str) and os.path.isdir(value) else ""
+
+
+def _remember_dir(path: str, key: str) -> None:
+    if path and os.path.isdir(path):
+        app_settings().setValue(f"paths/{key}", path)
+
+
 def pick_files(parent: QWidget, title: str, extensions: list[str],
-               multi: bool = True) -> list[str]:
+               multi: bool = True, key: str = "files") -> list[str]:
     filters = ";;".join(extensions)
+    start = _last_dir(key)
     if multi:
-        files, _ = QFileDialog.getOpenFileNames(parent, title, "", filters)
-        return list(files)
-    path, _ = QFileDialog.getOpenFileName(parent, title, "", filters)
-    return [path] if path else []
+        files, _ = QFileDialog.getOpenFileNames(parent, title, start, filters)
+        result = list(files)
+    else:
+        path, _ = QFileDialog.getOpenFileName(parent, title, start, filters)
+        result = [path] if path else []
+    if result:
+        _remember_dir(os.path.dirname(result[0]), key)
+    return result
 
 
-def pick_file(parent: QWidget, title: str, extensions: list[str]) -> str:
-    files = pick_files(parent, title, extensions, multi=False)
+def pick_file(parent: QWidget, title: str, extensions: list[str],
+              key: str = "files") -> str:
+    files = pick_files(parent, title, extensions, multi=False, key=key)
     return files[0] if files else ""
 
 
-def pick_dir(parent: QWidget, title: str = "选择目录") -> str:
-    return QFileDialog.getExistingDirectory(parent, title)
+def pick_dir(parent: QWidget, title: str = "选择目录", key: str = "dir") -> str:
+    path = QFileDialog.getExistingDirectory(parent, title, _last_dir(key))
+    if path:
+        _remember_dir(path, key)
+    return path
 
 
 def save_file(parent: QWidget, title: str, default_name: str = "output.xlsx",
-              extensions: list[str] | None = None) -> str:
+              extensions: list[str] | None = None, key: str = "save") -> str:
     extensions = extensions or ["Excel 表格 (*.xlsx *.xlsm)", "所有文件 (*.*)"]
-    path, _ = QFileDialog.getSaveFileName(parent, title, default_name, ";;".join(extensions))
+    start = os.path.join(_last_dir(key), default_name) if _last_dir(key) else default_name
+    path, _ = QFileDialog.getSaveFileName(parent, title, start, ";;".join(extensions))
+    if path:
+        _remember_dir(os.path.dirname(path), key)
     return path
 
 

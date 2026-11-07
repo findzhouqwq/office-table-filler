@@ -1,4 +1,4 @@
-"""Read source material (xlsx / csv / txt / json / docx / pptx) into models.
+"""Read source material (xlsx / csv / txt / json / docx / pptx / pdf) into models.
 
 Everything here is read-only; writing is handled by the engines.
 """
@@ -8,9 +8,12 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
+from . import pdf_io
 from .errors import DataError
+from .mapping import parse_labeled_lines
 from .spreadsheet import OpenpyxlEngine, get_spreadsheet_engine
 from .utils import clean_text, detect_delimiter, read_text_file, split_lines
 
@@ -150,7 +153,36 @@ def load_table(path: str, sheet: str = "", header_row: int = 1,
         return load_delimited(path, encoding=encoding, header_row=header_row)
     if lower.endswith(".json"):
         return load_json_table(path)
+    if lower.endswith(".pdf"):
+        return load_pdf_table(path)
     raise DataError(f"不支持的源文件类型：{os.path.basename(path)}")
+
+
+def load_pdf_table(path: str) -> TableData:
+    """Read a text-based PDF as a table.
+
+    Paragraphs containing ``label: value`` pairs become columns; otherwise the
+    whole document is exposed as a single ``内容`` column.  Scanned PDFs have no
+    text layer and must go through the image/OCR tab instead.
+    """
+    text = pdf_io.extract_pdf_text(path)
+    if not text.strip():
+        raise DataError(
+            "PDF 中没有可提取的文字（可能是扫描件）。"
+            "请改用「图片识别填表」并选择该 PDF，程序会自动按页 OCR。")
+    blocks = [block for block in re.split(r"\n\s*\n", text) if block.strip()]
+    parsed = [parse_labeled_lines(block) for block in blocks]
+    meaningful = [item for item in parsed if item]
+    if meaningful:
+        headers: list[str] = []
+        for item in meaningful:
+            for key in item:
+                if key not in headers:
+                    headers.append(key)
+        rows = [[item.get(head, "") for head in headers] for item in meaningful]
+        return TableData(headers, rows, path)
+    lines = [clean_text(line) for line in text.splitlines() if clean_text(line)]
+    return TableData(["内容"], [[line] for line in lines], path)
 
 
 # ---------------------------------------------------------------------------

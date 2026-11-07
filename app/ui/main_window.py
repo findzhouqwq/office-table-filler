@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QLabel, QMainWindow, QMessageBox, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from .. import __version__
-from .common import confirm
+from .common import app_settings, confirm
 from .cross_tab import CrossTab
 from .image_tab import ImageTab
 from .text_tab import TextTab
@@ -20,6 +20,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"表格批量填写工具 v{__version__}")
         self.resize(1180, 780)
         self._build()
+        self._restore_state()
+
+    def _restore_state(self) -> None:
+        geometry = app_settings().value("window/geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        state = app_settings().value("window/state")
+        if state:
+            self.restoreState(state)
 
     def _build(self) -> None:
         central = QWidget()
@@ -52,6 +61,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         from PySide6.QtWidgets import QToolBar
         toolbar = QToolBar("主工具栏")
+        toolbar.setObjectName("mainToolbar")
         toolbar.setMovable(False)
         open_action = QAction("打开目标表格", self)
         open_action.triggered.connect(self._open_target)
@@ -94,4 +104,6 @@ class MainWindow(QMainWindow):
             closer = getattr(widget, "on_before_close", None)
             if callable(closer):
                 closer()
+        app_settings().setValue("window/geometry", self.saveGeometry())
+        app_settings().setValue("window/state", self.saveState())
         event.accept()

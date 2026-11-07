@@ -11,12 +11,19 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
 from ..core import ocr as ocr_module
+from ..core import templates
+from ..core.errors import AppError
 from ..core.filler import ImageFillRequest, preview_image
+from ..core.models import ExtractionRule, FieldMapping
+from ..core.preview import build_image_preview
 from ..core.utils import clean_text
-from .common import pick_files, pick_file, save_file, show_error, Worker, format_report
+from .common import (format_report, pick_files, save_file, show_error, Worker)
 from .mapping_widgets import PlanTable, RuleTable
+from .preview_dialog import show_preview
+from .template_bar import TemplateBar
 
-IMAGE_EXTS = ["图片文件 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp)", "所有文件 (*.*)"]
+IMAGE_EXTS = ["图片 / PDF (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.pdf)",
+              "所有文件 (*.*)"]
 TABLE_EXTS = ["Excel 表格 (*.xlsx *.xlsm *.xltx *.xltm)", "所有文件 (*.*)"]
 
 
@@ -30,6 +37,11 @@ class ImageTab(QWidget):
     # -- UI -----------------------------------------------------------------
     def _build(self) -> None:
         root = QVBoxLayout(self)
+
+        self.template_bar = TemplateBar("image")
+        self.template_bar.save_requested.connect(self._save_template)
+        self.template_bar.load_requested.connect(self._load_template)
+        root.addWidget(self.template_bar)
 
         # ---- target group ----
         target = QGroupBox("目标表格")
@@ -156,6 +168,9 @@ class ImageTab(QWidget):
 
         # ---- run / report ----
         run = QHBoxLayout()
+        self.validate_btn = QPushButton("预览 / 校验")
+        self.validate_btn.clicked.connect(self._preview_run)
+        run.addWidget(self.validate_btn)
         self.run_btn = QPushButton("开始批量填表")
         self.run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self.run_btn.clicked.connect(self._run)
@@ -272,23 +287,21 @@ class ImageTab(QWidget):
         show_error(self, "识别失败", message)
 
     # -- run ---------------------------------------------------------------
-    def _run(self) -> None:
+    def _build_request(self) -> ImageFillRequest | None:
         images = self._images()
-        target = self.target_edit.text()
+        target = self.target_edit.text().strip()
         if not images:
-            show_error(self, "缺少图片", "请先添加至少一张图片。")
-            return
-        if not target or not target.strip():
+            show_error(self, "缺少图片", "请先添加至少一张图片或 PDF。")
+            return None
+        if not target:
             show_error(self, "缺少目标", "请选择目标表格。")
-            return
+            return None
 
-        from ..core.models import ExtractionRule, FieldMapping
         rules = [] if self.mode_combo.currentIndex() == 0 else self.rule_table.to_rules()
         plan = [] if self.mode_combo.currentIndex() == 0 else self.plan_table.to_plan()
         if self.mode_combo.currentIndex() == 1 and not plan:
             plan = [FieldMapping(target="A", source="内容")]
-
-        request = ImageFillRequest(
+        return ImageFillRequest(
             images=images,
             target_path=target,
             output_path=self.output_edit.text().strip(),
@@ -302,8 +315,17 @@ class ImageTab(QWidget):
             extraction_rules=rules,
             column_plan=plan,
         )
-        engine_pref = self.engine_combo.currentText()
-        self.run_btn.setEnabled(False)
+
+    def _set_busy(self, busy: bool) -> None:
+        self.run_btn.setEnabled(not busy)
+        self.validate_btn.setEnabled(not busy)
+
+    def _run(self) -> None:
+        request = self._build_request()
+        if request is None:
+            return
+        engine_pref = request.ocr_engine
+        self._set_busy(True)
         self.status_label.setText("正在批量识别并填表…")
 
         def job(progress=lambda *_: None):
@@ -314,8 +336,33 @@ class ImageTab(QWidget):
         self.worker = Worker(job, parent=self)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_fail)
-        self.worker.finished.connect(lambda: self.run_btn.setEnabled(True))
+        self.worker.finished.connect(lambda: self._set_busy(False))
         self.worker.start()
+
+    def _preview_run(self) -> None:
+        request = self._build_request()
+        if request is None:
+            return
+        engine_pref = request.ocr_engine
+        self._set_busy(True)
+        self.status_label.setText("正在生成预览（OCR）…")
+
+        def job(progress=lambda *_: None):
+            engine = ocr_module.get_ocr_engine(engine_pref)
+            return build_image_preview(request, ocr_engine=engine)
+
+        self.worker = Worker(job, parent=self)
+        self.worker.finished_ok.connect(self._on_preview_result)
+        self.worker.failed.connect(self._on_fail)
+        self.worker.finished.connect(lambda: self._set_busy(False))
+        self.worker.start()
+
+    def _on_preview_result(self, result) -> None:
+        self.status_label.setText(
+            f"预览完成：预计写入 {result.total_rows} 行，"
+            f"{len(result.issues.errors)} 个错误 / {len(result.issues.warnings)} 个提示。")
+        if show_preview(self, result):
+            self._run()
 
     def _on_done(self, report) -> None:
         self.status_label.setText(f"完成：写入 {report.written} 处。")
@@ -323,6 +370,71 @@ class ImageTab(QWidget):
         for record in report.records[:80]:
             lines.append(f"{record.target}  ←  {record.source}  =  {record.value}")
         self.report_edit.setPlainText("\n".join(lines))
+
+    # -- templates ---------------------------------------------------------
+    def _template_data(self) -> dict:
+        return {
+            "images": self._images(),
+            "target_path": self.target_edit.text().strip(),
+            "output_path": self.output_edit.text().strip(),
+            "sheet": self.sheet_combo.currentText(),
+            "header_row": self.header_spin.value(),
+            "anchor": self.anchor_edit.text().strip(),
+            "append": self.append_box.isChecked(),
+            "clear_sheet": self.clear_box.isChecked(),
+            "mode": self.mode_combo.currentIndex(),
+            "ocr_engine": self.engine_combo.currentText(),
+            "extraction_rules": [rule.to_dict() for rule in self.rule_table.to_rules()],
+            "column_plan": [plan.to_dict() for plan in self.plan_table.to_plan()],
+        }
+
+    def _apply_template_data(self, data: dict) -> None:
+        self.image_list.clear()
+        for path in data.get("images") or []:
+            self.image_list.addItem(QListWidgetItem(path))
+        target = data.get("target_path") or ""
+        if target:
+            self.target_edit.setText(target)
+            self._load_sheets(target)
+        self.output_edit.setText(data.get("output_path") or "")
+        sheet = data.get("sheet") or ""
+        if sheet:
+            index = self.sheet_combo.findText(sheet)
+            if index >= 0:
+                self.sheet_combo.setCurrentIndex(index)
+        self.header_spin.setValue(int(data.get("header_row", 1) or 1))
+        self.anchor_edit.setText(data.get("anchor") or "A1")
+        self.append_box.setChecked(bool(data.get("append", True)))
+        self.clear_box.setChecked(bool(data.get("clear_sheet", False)))
+        self.mode_combo.setCurrentIndex(int(data.get("mode", 0) or 0))
+        engine = data.get("ocr_engine") or "自动"
+        index = self.engine_combo.findText(engine)
+        if index >= 0:
+            self.engine_combo.setCurrentIndex(index)
+        self.rule_table.load(
+            [ExtractionRule.from_dict(item) for item in data.get("extraction_rules", [])])
+        self.plan_table.load(
+            [FieldMapping.from_dict(item) for item in data.get("column_plan", [])])
+        self._toggle_mode()
+
+    def _save_template(self, name: str) -> None:
+        try:
+            templates.save_template(name, "image", self._template_data())
+        except AppError as exc:
+            show_error(self, "保存模板失败", str(exc))
+            return
+        self.template_bar.refresh()
+        self.template_bar.select(name)
+        self.status_label.setText(f"模板已保存：{name}")
+
+    def _load_template(self, name: str) -> None:
+        try:
+            template = templates.load_template(name, "image")
+        except AppError as exc:
+            show_error(self, "读取模板失败", str(exc))
+            return
+        self._apply_template_data(template.data)
+        self.status_label.setText(f"已应用模板：{name}")
 
     def on_before_close(self) -> bool:
         if self.worker is not None and self.worker.isRunning():

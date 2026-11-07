@@ -196,6 +196,35 @@ class FillerTests(unittest.TestCase):
         self.assertEqual(eng.cell_value("员工表", "B4"), "E099")
         eng.close()
 
+    def test_text_dry_run_does_not_save(self):
+        target = os.path.join(self.samples, "samples", "target.xlsx")
+        out = self._out("text_dry.xlsx")
+        shutil.copy2(target, out)
+        before = os.path.getmtime(out)
+        report = fill_from_text(TextFillRequest(
+            records=[{"姓名": "预览"}],
+            target_path=out, output_path=out,
+            dry_run=True,
+        ))
+        self.assertEqual(report.written, 1)
+        self.assertEqual(report.output_path, "")
+        self.assertEqual(os.path.getmtime(out), before)
+        self.assertFalse([n for n in os.listdir(self.tmp)
+                          if n.startswith("text_dry.bak-")])
+
+    def test_in_place_save_creates_backup(self):
+        target = os.path.join(self.samples, "samples", "target.xlsx")
+        out = self._out("text_backup.xlsx")
+        shutil.copy2(target, out)
+        request = TextFillRequest(
+            records=[{"姓名": "备份测试"}],
+            target_path=out, output_path=out,
+        )
+        fill_from_text(request)
+        fill_from_text(request)
+        backups = [n for n in os.listdir(self.tmp) if n.startswith("text_backup.bak-")]
+        self.assertTrue(backups)
+
 
 if __name__ == "__main__":
     unittest.main()

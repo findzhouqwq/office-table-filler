@@ -7,6 +7,21 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
+# Cross-file target kinds and the file extensions they support
+# ---------------------------------------------------------------------------
+
+KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
+    "xlsx_cell": (".xlsx", ".xlsm", ".xltx", ".xltm"),
+    "xlsx_rows": (".xlsx", ".xlsm", ".xltx", ".xltm"),
+    "docx_table_cell": (".docx", ".docm"),
+    "docx_table_rows": (".docx", ".docm"),
+    "docx_placeholder": (".docx", ".docm"),
+    "pptx_table_cell": (".pptx", ".pptm"),
+    "pptx_placeholder": (".pptx", ".pptm"),
+}
+
+
+# ---------------------------------------------------------------------------
 # Mapping rules
 # ---------------------------------------------------------------------------
 
@@ -43,6 +58,18 @@ class ExtractionRule:
             "required": self.required,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "ExtractionRule":
+        return cls(
+            field=str(data.get("field", "")),
+            pattern_type=str(data.get("pattern_type", "label")),
+            pattern=str(data.get("pattern", "")),
+            position=int(data.get("position", 0) or 0),
+            default=str(data.get("default", "")),
+            transform=str(data.get("transform", "text")),
+            required=bool(data.get("required", False)),
+        )
+
 
 @dataclass
 class FieldMapping:
@@ -60,6 +87,15 @@ class FieldMapping:
             "transform": self.transform,
             "default": self.default,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FieldMapping":
+        return cls(
+            target=str(data.get("target", "")),
+            source=str(data.get("source", "")),
+            transform=str(data.get("transform", "text")),
+            default=str(data.get("default", "")),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +223,22 @@ class TargetRef:
             "label": self.label,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "TargetRef":
+        return cls(
+            kind=str(data.get("kind", "")),
+            file=str(data.get("file", "")),
+            sheet=str(data.get("sheet", "")),
+            cell=str(data.get("cell", "")),
+            table=int(data.get("table", -1) or -1),
+            row=int(data.get("row", -1) if data.get("row") is not None else -1),
+            col=int(data.get("col", -1) if data.get("col") is not None else -1),
+            slide=int(data.get("slide", -1) if data.get("slide") is not None else -1),
+            row_start=int(data.get("row_start", 0) or 0),
+            placeholder=str(data.get("placeholder", "")),
+            label=str(data.get("label", "")),
+        )
+
 
 @dataclass
 class MappingEntry:
@@ -205,6 +257,15 @@ class MappingEntry:
             "default": self.default,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "MappingEntry":
+        return cls(
+            source=str(data.get("source", "")),
+            target=TargetRef.from_dict(data.get("target") or {}),
+            transform=str(data.get("transform", "text")),
+            default=str(data.get("default", "")),
+        )
+
 
 @dataclass
 class MappingDoc:
@@ -218,3 +279,10 @@ class MappingDoc:
             "entries": [e.to_dict() for e in self.entries],
             "meta": self.meta,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MappingDoc":
+        return cls(
+            entries=[MappingEntry.from_dict(e) for e in data.get("entries", [])],
+            meta=dict(data.get("meta") or {}),
+        )

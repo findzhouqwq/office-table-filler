@@ -13,14 +13,16 @@ import shutil
 from dataclasses import dataclass, field
 
 from .errors import DataError, FillError, MappingError
-from .models import (ExtractionRule, FillReport, FillRecord, FieldMapping,
-                     MappingEntry)
+from .models import (KIND_EXTENSIONS, ExtractionRule, FillReport,
+                     FillRecord, FieldMapping, MappingEntry)
 from .ocr import OcrEngine, get_ocr_engine
 from .spreadsheet import OpenpyxlEngine, get_spreadsheet_engine
 from .table_detect import build_grid_from_ocr, cluster_words_to_grid
 from .utils import apply_transform, clean_text, norm_header
 from .mapping import extract_fields, parse_labeled_lines, resolve_column
 from .data_io import TableData, load_table
+from . import pdf_io
+from .safeio import save_with_backup
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,8 @@ class ImageFillRequest:
     extraction_rules: list[ExtractionRule] = field(default_factory=list)
     column_plan: list[FieldMapping] = field(default_factory=list)
     max_cols: int = 30
+    dry_run: bool = False
+    backup: bool = True
 
 
 @dataclass
@@ -57,6 +61,8 @@ class TextFillRequest:
     column_plan: list[FieldMapping] = field(default_factory=list)
     extraction_rules: list[ExtractionRule] = field(default_factory=list)
     delimiter: str = ""
+    dry_run: bool = False
+    backup: bool = True
 
 
 @dataclass
@@ -70,6 +76,7 @@ class CrossFillRequest:
     batch_by_row: bool = True
     overwrite: bool = False
     sheet_for_target: str = ""
+    dry_run: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -103,13 +110,15 @@ def _split_anchor(anchor: str) -> tuple[int, int]:
 
 
 def _copy_to_output(src: str, output: str) -> str:
+    """Copy the template to *output* atomically, backing up an old result."""
     if not output or os.path.abspath(output) == os.path.abspath(src):
         return src
     directory = os.path.dirname(os.path.abspath(output))
     if directory and not os.path.isdir(directory):
         os.makedirs(directory, exist_ok=True)
-    shutil.copy2(src, output)
-    return output
+    saved, _ = save_with_backup(
+        output, lambda tmp: shutil.copy2(src, tmp), backup=True)
+    return saved
 
 
 def _batch_output(output_dir: str, base: str, index: int, total: int) -> str:
@@ -187,70 +196,79 @@ def fill_from_images(request: ImageFillRequest,
         raise DataError("请选择有效的目标表格文件。")
 
     engine_ocr = ocr_engine or get_ocr_engine(request.ocr_engine)
-    engine = OpenpyxlEngine()
-    engine.open(request.target_path)
+    # PDFs are rendered to temporary page images so scanned documents follow
+    # exactly the same OCR pipeline as photos.
+    image_paths, temp_dir = pdf_io.expand_image_inputs(request.images)
     try:
-        sheet = request.sheet or engine.active()
-        engine.set_active(sheet)
-        ws = engine._ws(sheet)
-        if request.clear_sheet:
-            ws.delete_rows(1, ws.max_row)
-            ws.delete_cols(1, ws.max_column)
+        engine = OpenpyxlEngine()
+        engine.open(request.target_path)
+        try:
+            sheet = request.sheet or engine.active()
+            engine.set_active(sheet)
+            ws = engine._ws(sheet)
+            if request.clear_sheet:
+                ws.delete_rows(1, ws.max_row)
+                ws.delete_cols(1, ws.max_column)
 
-        anchor_row, anchor_col = _split_anchor(request.anchor)
-        if request.append and anchor_row == 1 and anchor_col == 1:
-            max_row, _ = engine.dims(sheet)
-            anchor_row = max_row + 1 if max_row > 1 else 1
-        header_map = engine.header_map(sheet, request.header_row)
-        width = max(len(header_map), anchor_col, 1)
+            anchor_row, anchor_col = _split_anchor(request.anchor)
+            if request.append and anchor_row == 1 and anchor_col == 1:
+                max_row, _ = engine.dims(sheet)
+                anchor_row = max_row + 1 if max_row > 1 else 1
+            header_map = engine.header_map(sheet, request.header_row)
+            width = max(len(header_map), anchor_col, 1)
 
-        cursor_row = anchor_row
-        for image_path in request.images:
-            result = engine_ocr.recognize(image_path)
-            if request.mode == "fields":
-                fields = extract_fields(result.text, request.extraction_rules)
-                if not fields and not request.extraction_rules:
-                    fields = parse_labeled_lines(result.text)
-                row = _row_values_from_plan(request.column_plan, fields, header_map, width)
-                engine.write_row(sheet, cursor_row, row)
-                report.add(FillRecord(
-                    target=f"{sheet}!{_col_letter(1)}{cursor_row}",
-                    value=str(row), source=os.path.basename(image_path), file=image_path,
-                ))
-                cursor_row += 1
-            else:
-                result, prepared = engine_ocr.recognize_with_image(image_path)
-                words = result.words_as_tuples()
-                grid = build_grid_from_ocr(prepared, words)
-                if not grid.used_lines and not grid.cells:
-                    grid = cluster_words_to_grid(words)
-                matrix = grid.matrix()
-                if not matrix:
-                    report.warn(f"{os.path.basename(image_path)}：未识别到表格内容。")
-                    continue
-                # "写入位置" applies to the whole block: shift grid rows so
-                # that the first cell lands on the requested column.
-                offset = anchor_col - 1
-                for row_index, row in enumerate(matrix):
-                    trimmed = [clean_text(v) for v in row]
-                    if not any(trimmed):
-                        continue
-                    values = ([""] * offset + trimmed) if offset else trimmed
-                    engine.write_row(sheet, cursor_row, values)
+            cursor_row = anchor_row
+            for image_path in image_paths:
+                result = engine_ocr.recognize(image_path)
+                if request.mode == "fields":
+                    fields = extract_fields(result.text, request.extraction_rules)
+                    if not fields and not request.extraction_rules:
+                        fields = parse_labeled_lines(result.text)
+                    row = _row_values_from_plan(request.column_plan, fields, header_map, width)
+                    engine.write_row(sheet, cursor_row, row)
                     report.add(FillRecord(
-                        target=f"{sheet}!{_col_letter(anchor_col)}{cursor_row}",
-                        value=" | ".join(trimmed), source=os.path.basename(image_path),
-                        file=image_path,
+                        target=f"{sheet}!{_col_letter(1)}{cursor_row}",
+                        value=str(row), source=os.path.basename(image_path), file=image_path,
                     ))
                     cursor_row += 1
-        # Only persist on success: saving in ``finally`` would overwrite the
-        # target with a partially filled workbook when OCR or writing fails.
-        output = request.output_path or request.target_path
-        engine.save(output)
-        report.output_path = output
+                else:
+                    result, prepared = engine_ocr.recognize_with_image(image_path)
+                    words = result.words_as_tuples()
+                    grid = build_grid_from_ocr(prepared, words)
+                    if not grid.used_lines and not grid.cells:
+                        grid = cluster_words_to_grid(words)
+                    matrix = grid.matrix()
+                    if not matrix:
+                        report.warn(f"{os.path.basename(image_path)}：未识别到表格内容。")
+                        continue
+                    # "写入位置" applies to the whole block: shift grid rows so
+                    # that the first cell lands on the requested column.
+                    offset = anchor_col - 1
+                    for row_index, row in enumerate(matrix):
+                        trimmed = [clean_text(v) for v in row]
+                        if not any(trimmed):
+                            continue
+                        values = ([""] * offset + trimmed) if offset else trimmed
+                        engine.write_row(sheet, cursor_row, values)
+                        report.add(FillRecord(
+                            target=f"{sheet}!{_col_letter(anchor_col)}{cursor_row}",
+                            value=" | ".join(trimmed), source=os.path.basename(image_path),
+                            file=image_path,
+                        ))
+                        cursor_row += 1
+            # Only persist on success and never in preview mode: saving in
+            # ``finally`` would overwrite the target with a partial workbook.
+            if request.dry_run:
+                report.warn("预览模式：未保存任何文件。")
+            else:
+                output = request.output_path or request.target_path
+                engine.save(output, backup=request.backup)
+                report.output_path = output
+        finally:
+            engine.close()
     finally:
-        engine.close()
-    report.warn(f"共处理 {len(request.images)} 张图片，写入 {report.written} 处。")
+        pdf_io.cleanup_temp_dir(temp_dir)
+    report.warn(f"共处理 {len(image_paths)} 张图片，写入 {report.written} 处。")
     return report
 
 
@@ -306,9 +324,12 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
                 value=" | ".join(str(v) for v in row),
                 source=f"记录{offset + 1}", file=request.target_path,
             ))
-        output = request.output_path or request.target_path
-        eng.save(output)
-        report.output_path = output
+        if request.dry_run:
+            report.warn("预览模式：未保存任何文件。")
+        else:
+            output = request.output_path or request.target_path
+            eng.save(output, backup=request.backup)
+            report.output_path = output
     finally:
         eng.close()
     return report
@@ -422,7 +443,7 @@ def _apply_docx(path: str, output: str, entries: list[MappingEntry],
             report.add(FillRecord(target=ref.describe(), value=value,
                                   source=entry.source, file=output,
                                   message=f"替换 {count} 处" if count else "未找到占位符"))
-    document.save(output)
+    save_with_backup(output, lambda tmp: document.save(tmp), backup=False)
 
 
 def _apply_pptx(path: str, output: str, entries: list[MappingEntry],
@@ -459,7 +480,7 @@ def _apply_pptx(path: str, output: str, entries: list[MappingEntry],
             report.add(FillRecord(target=ref.describe(), value=value,
                                   source=entry.source, file=output,
                                   message=f"替换 {replaced} 处" if replaced else "未找到占位符"))
-    prs.save(output)
+    save_with_backup(output, lambda tmp: prs.save(tmp), backup=False)
 
 
 def _find_table_shape(slide, table_index: int):
@@ -467,17 +488,6 @@ def _find_table_shape(slide, table_index: int):
     if 0 <= table_index < len(tables):
         return tables[table_index]
     return None
-
-
-_KIND_EXTENSIONS = {
-    "xlsx_cell": (".xlsx", ".xlsm", ".xltx", ".xltm"),
-    "xlsx_rows": (".xlsx", ".xlsm", ".xltx", ".xltm"),
-    "docx_table_cell": (".docx", ".docm"),
-    "docx_table_rows": (".docx", ".docm"),
-    "docx_placeholder": (".docx", ".docm"),
-    "pptx_table_cell": (".pptx", ".pptm"),
-    "pptx_placeholder": (".pptx", ".pptm"),
-}
 
 
 def _entries_for_target(entries: list[MappingEntry], target: str) -> list[MappingEntry]:
@@ -491,7 +501,7 @@ def _entries_for_target(entries: list[MappingEntry], target: str) -> list[Mappin
     lower = target.lower()
     matched: list[MappingEntry] = []
     for entry in entries:
-        kind_exts = _KIND_EXTENSIONS.get(entry.target.kind)
+        kind_exts = KIND_EXTENSIONS.get(entry.target.kind)
         if kind_exts and not lower.endswith(kind_exts):
             continue
         ref_file = entry.target.file
@@ -505,7 +515,7 @@ def _entries_for_target(entries: list[MappingEntry], target: str) -> list[Mappin
 
 def _apply_xlsx(path: str, output: str, entries: list[MappingEntry],
                 records: list[dict], report: FillReport,
-                sheet_name: str = "") -> None:
+                sheet_name: str = "", backup: bool = False) -> None:
     eng = get_spreadsheet_engine("direct")
     eng.open(path)
     try:
@@ -537,7 +547,7 @@ def _apply_xlsx(path: str, output: str, entries: list[MappingEntry],
                                           source=entry.source, file=output))
                 else:
                     raise FillError(f"不支持的目标类型：{ref.kind}")
-        eng.save(output)
+        eng.save(output, backup=backup)
     finally:
         eng.close()
 
@@ -586,6 +596,25 @@ def fill_cross_files(request: CrossFillRequest) -> FillReport:
     report.warn(f"源数据：{len(records)} 行 / {len(sources.headers)} 列。")
 
     output_dir = request.output_dir or os.path.dirname(request.target_paths[0]) or "."
+
+    if request.dry_run:
+        planned: list[str] = []
+        for target in request.target_paths:
+            entries = _entries_for_target(request.mappings, target)
+            if not entries:
+                planned.append(f"{os.path.basename(target)}（无映射，跳过）")
+                continue
+            lower = target.lower()
+            if lower.endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
+                planned.append(f"{os.path.basename(target)}（{len(entries)} 条映射）")
+            else:
+                copies = len(records) if request.batch_by_row else 1
+                planned.append(f"{os.path.basename(target)}（{len(entries)} 条映射 × {copies} 份）")
+        report.warn("预览模式：未写入任何文件。")
+        report.warn("计划：" + "；".join(planned))
+        report.output_path = output_dir
+        return report
+
     os.makedirs(output_dir, exist_ok=True)
 
     for target in request.target_paths:

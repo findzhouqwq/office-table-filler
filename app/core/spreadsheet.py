@@ -18,6 +18,7 @@ import re
 from typing import Iterable, Sequence
 
 from .errors import EngineError, FillError
+from .safeio import backup_file, save_with_backup
 from .utils import clean_text, norm_header
 
 try:  # pragma: no cover - import guard
@@ -78,7 +79,7 @@ class SpreadsheetEngine:
     def close(self) -> None:
         raise NotImplementedError
 
-    def save(self, path: str | None = None) -> str:
+    def save(self, path: str | None = None, backup: bool = True) -> str:
         raise NotImplementedError
 
     # -- inspection --------------------------------------------------------
@@ -207,12 +208,12 @@ class OpenpyxlEngine(SpreadsheetEngine):
             self._wb.close()
             self._wb = None
 
-    def save(self, path: str | None = None) -> str:
+    def save(self, path: str | None = None, backup: bool = True) -> str:
         if self._wb is None:
             raise FillError("工作簿尚未打开。")
         target = os.path.abspath(path or self.path)
         ensure_parent(target)
-        self._wb.save(target)
+        save_with_backup(target, lambda tmp: self._wb.save(tmp), backup=backup)
         self.path = target
         return target
 
@@ -363,11 +364,16 @@ class ExcelComEngine(SpreadsheetEngine):
                     pass
                 self._com_initialized = False
 
-    def save(self, path: str | None = None) -> str:
+    def save(self, path: str | None = None, backup: bool = True) -> str:
         if self._wb is None:
             raise FillError("工作簿尚未打开。")
         target = os.path.abspath(path or self.path)
         ensure_parent(target)
+        if backup and os.path.isfile(target):
+            try:
+                backup_file(target)
+            except OSError as exc:
+                raise FillError(f"无法创建备份文件：{exc}") from exc
         self._wb.SaveAs(target)
         self.path = target
         return target

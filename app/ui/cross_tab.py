@@ -8,13 +8,20 @@ from PySide6.QtWidgets import (QCheckBox, QGroupBox, QHBoxLayout, QLabel,
                                QPushButton, QSpinBox, QSplitter, QTableWidget,
                                QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
+from ..core import templates
 from ..core.data_io import load_docx, load_pptx, load_table
+from ..core.errors import AppError
 from ..core.filler import CrossFillRequest, fill_cross_files
+from ..core.models import MappingEntry
+from ..core.preview import build_cross_preview
 from ..core.utils import clean_text
 from .common import pick_files, pick_dir, show_error, Worker, format_report
 from .mapping_widgets import TargetTable
+from .preview_dialog import show_preview
+from .template_bar import TemplateBar
 
-SOURCE_EXTS = ["数据文件 (*.csv *.txt *.tsv *.json *.xlsx *.xlsm)", "所有文件 (*.*)"]
+SOURCE_EXTS = ["数据 / PDF 文件 (*.csv *.txt *.tsv *.json *.xlsx *.xlsm *.pdf)",
+               "所有文件 (*.*)"]
 TARGET_EXTS = ["目标文件 (*.xlsx *.xlsm *.docx *.pptx)", "所有文件 (*.*)"]
 
 
@@ -30,6 +37,11 @@ class CrossTab(QWidget):
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
+
+        self.template_bar = TemplateBar("cross")
+        self.template_bar.save_requested.connect(self._save_template)
+        self.template_bar.load_requested.connect(self._load_template)
+        root.addWidget(self.template_bar)
 
         splitter = QSplitter(Qt.Horizontal)
 
@@ -107,6 +119,9 @@ class CrossTab(QWidget):
         root.addLayout(mbtns)
 
         run = QHBoxLayout()
+        self.validate_btn = QPushButton("预览 / 校验")
+        self.validate_btn.clicked.connect(self._preview_run)
+        run.addWidget(self.validate_btn)
         self.run_btn = QPushButton("开始跨文件填表")
         self.run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self.run_btn.clicked.connect(self._run)
@@ -193,20 +208,20 @@ class CrossTab(QWidget):
                 lines.append(f"{path}\n  读取失败：{exc}")
         self.info_edit.setPlainText("\n".join(lines))
 
-    def _run(self) -> None:
+    def _build_request(self) -> CrossFillRequest | None:
         sources = [self.source_list.item(i).text() for i in range(self.source_list.count())]
         targets = [self.target_list.item(i).text() for i in range(self.target_list.count())]
         if not sources:
             show_error(self, "缺少源", "请添加源文件。")
-            return
+            return None
         if not targets:
             show_error(self, "缺少目标", "请添加目标文件。")
-            return
+            return None
         entries = self.mapping_table.to_entries(targets[0])
         if not entries:
             show_error(self, "缺少映射", "请添加至少一条字段映射。")
-            return
-        request = CrossFillRequest(
+            return None
+        return CrossFillRequest(
             source_paths=sources,
             source_sheet=self.src_sheet_edit.text().strip(),
             source_header_row=max(1, self.src_header_spin.value()),
@@ -215,13 +230,33 @@ class CrossTab(QWidget):
             output_dir=self.outdir_edit.text().strip(),
             batch_by_row=self.batch_box.isChecked(),
         )
-        self.run_btn.setEnabled(False)
+
+    def _set_busy(self, busy: bool) -> None:
+        self.run_btn.setEnabled(not busy)
+        self.validate_btn.setEnabled(not busy)
+
+    def _run(self) -> None:
+        request = self._build_request()
+        if request is None:
+            return
+        self._set_busy(True)
         self.status_label.setText("正在跨文件填表…")
         self.worker = Worker(lambda: fill_cross_files(request), parent=self)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_fail)
-        self.worker.finished.connect(lambda: self.run_btn.setEnabled(True))
+        self.worker.finished.connect(lambda: self._set_busy(False))
         self.worker.start()
+
+    def _preview_run(self) -> None:
+        request = self._build_request()
+        if request is None:
+            return
+        result = build_cross_preview(request)
+        self.status_label.setText(
+            f"预览完成：{result.total_rows} 行源数据，"
+            f"{len(result.issues.errors)} 个错误 / {len(result.issues.warnings)} 个提示。")
+        if show_preview(self, result):
+            self._run()
 
     def _on_done(self, report) -> None:
         self.status_label.setText(f"完成：写入 {report.written} 处。")
@@ -230,6 +265,56 @@ class CrossTab(QWidget):
     def _on_fail(self, message: str) -> None:
         self.status_label.setText("失败。")
         show_error(self, "跨文件填表失败", message)
+
+    # -- templates ---------------------------------------------------------
+    def _template_data(self) -> dict:
+        return {
+            "sources": [self.source_list.item(i).text()
+                        for i in range(self.source_list.count())],
+            "targets": [self.target_list.item(i).text()
+                        for i in range(self.target_list.count())],
+            "source_sheet": self.src_sheet_edit.text().strip(),
+            "source_header_row": self.src_header_spin.value(),
+            "output_dir": self.outdir_edit.text().strip(),
+            "batch_by_row": self.batch_box.isChecked(),
+            "mappings": [entry.to_dict() for entry in
+                         self.mapping_table.to_entries("")],
+        }
+
+    def _apply_template_data(self, data: dict) -> None:
+        self.source_list.clear()
+        for path in data.get("sources") or []:
+            self.source_list.addItem(QListWidgetItem(path))
+        self.target_list.clear()
+        for path in data.get("targets") or []:
+            self.target_list.addItem(QListWidgetItem(path))
+        self.src_sheet_edit.setText(data.get("source_sheet") or "")
+        self.src_header_spin.setValue(int(data.get("source_header_row", 1) or 1))
+        self.outdir_edit.setText(data.get("output_dir") or "")
+        self.batch_box.setChecked(bool(data.get("batch_by_row", True)))
+        self.mapping_table.load(
+            [MappingEntry.from_dict(item) for item in data.get("mappings", [])])
+        if self.source_list.count():
+            self._load_sources()
+
+    def _save_template(self, name: str) -> None:
+        try:
+            templates.save_template(name, "cross", self._template_data())
+        except AppError as exc:
+            show_error(self, "保存模板失败", str(exc))
+            return
+        self.template_bar.refresh()
+        self.template_bar.select(name)
+        self.status_label.setText(f"模板已保存：{name}")
+
+    def _load_template(self, name: str) -> None:
+        try:
+            template = templates.load_template(name, "cross")
+        except AppError as exc:
+            show_error(self, "读取模板失败", str(exc))
+            return
+        self._apply_template_data(template.data)
+        self.status_label.setText(f"已应用模板：{name}")
 
     def on_before_close(self) -> bool:
         if self.worker is not None and self.worker.isRunning():

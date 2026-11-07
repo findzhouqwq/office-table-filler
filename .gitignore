@@ -1,0 +1,26 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- 运行时产物 ---
+demo_output/
+samples/
+table_filler.log
+*.log
+
+# --- 预览 / 临时 ---
+preview_main.png
+preview_tab1.png
+/_*.py
+.wheels/
+
+# --- 编辑器 / 系统 ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

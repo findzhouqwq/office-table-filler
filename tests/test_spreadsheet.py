@@ -62,6 +62,32 @@ class SpreadsheetTests(unittest.TestCase):
         with self.assertRaises(EngineError):
             eng.open(os.path.join(self.tmp, "nope.xlsx"))
 
+    def test_formula_text_stays_text(self):
+        """Values from OCR/imported data must not become live formulas."""
+        from openpyxl import Workbook, load_workbook
+        wb = Workbook()
+        wb.active.append(["值"])
+        wb.save(self.path)
+        eng = OpenpyxlEngine()
+        eng.open(self.path)
+        eng.write_value("Sheet", "A2", '=HYPERLINK("http://example.com")')
+        eng.save(self.path)
+        eng.close()
+        cell = load_workbook(self.path)["Sheet"]["A2"]
+        self.assertEqual(cell.data_type, "s")
+        self.assertTrue(cell.value.startswith("="))
+
+    def test_invalid_coordinate_rejected(self):
+        from openpyxl import Workbook
+        from app.core.errors import FillError
+        wb = Workbook()
+        wb.save(self.path)
+        eng = OpenpyxlEngine()
+        eng.open(self.path)
+        with self.assertRaises(FillError):
+            eng.write_value("Sheet", "ZZZ1", "x")
+        eng.close()
+
 
 if __name__ == "__main__":
     unittest.main()

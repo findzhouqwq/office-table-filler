@@ -21,7 +21,8 @@ def pick_files(parent: QWidget, title: str, extensions: list[str],
 
 
 def pick_file(parent: QWidget, title: str, extensions: list[str]) -> str:
-    return pick_files(parent, title, extensions, multi=False)[0]
+    files = pick_files(parent, title, extensions, multi=False)
+    return files[0] if files else ""
 
 
 def pick_dir(parent: QWidget, title: str = "选择目录") -> str:

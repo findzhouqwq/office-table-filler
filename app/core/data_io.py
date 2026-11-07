@@ -72,9 +72,19 @@ def load_json_table(path: str) -> TableData:
     if isinstance(data, dict):
         # {"headers": [...], "rows": [[...]]} or {"name": "value", ...}
         if "rows" in data:
+            raw_rows = data.get("rows") or []
             headers = [str(h) for h in data.get("headers", [])]
-            rows = [[r if not isinstance(r, dict) else r.get(h, "") for h in headers] for r in data["rows"]]
-            return TableData(headers or [f"列{i + 1}" for i in range(len(rows[0]) if rows else 0)], rows, path)
+            if not headers and raw_rows and all(isinstance(r, dict) for r in raw_rows):
+                for item in raw_rows:
+                    for key in item:
+                        if str(key) not in headers:
+                            headers.append(str(key))
+            rows = [[r if not isinstance(r, dict) else r.get(h, "") for h in headers]
+                    for r in raw_rows]
+            if not headers:
+                width = max((len(r) for r in raw_rows if isinstance(r, list)), default=0)
+                headers = [f"列{i + 1}" for i in range(width)]
+            return TableData(headers, rows, path)
         data = [data]
     if not isinstance(data, list) or not data:
         raise DataError("JSON 顶层应为数组或带 rows 的对象。")
@@ -96,7 +106,9 @@ def load_json_table(path: str) -> TableData:
 # ---------------------------------------------------------------------------
 
 def load_spreadsheet(path: str, sheet: str = "", header_row: int = 1,
-                     engine: str = "auto") -> TableData:
+                     engine: str = "direct") -> TableData:
+    # Reading never needs a live Office instance; the direct engine avoids
+    # launching Excel/WPS just to inspect a workbook.
     eng = get_spreadsheet_engine(engine)
     try:
         eng.open(path)
@@ -104,19 +116,14 @@ def load_spreadsheet(path: str, sheet: str = "", header_row: int = 1,
         target = sheet or names[0]
         if target not in names:
             raise DataError(f"找不到工作表：{target}")
+        header_row = max(1, int(header_row or 1))
         max_row, max_col = eng.dims(target)
-        if header_row > 1:
-            headers = [str(eng.cell_value(target, _col_letter(c)) or "") for c in range(1, max_col + 1)]
-            headers = [clean_text(h) or f"列{i + 1}" for i, h in enumerate(headers)]
-            start = header_row + 1
-        else:
-            headers = []
-            for c in range(1, max_col + 1):
-                value = eng.cell_value(target, _col_letter(c))
-                headers.append(clean_text(value) or f"列{i + 1}")
-            start = 2
+        headers: list[str] = []
+        for c in range(1, max_col + 1):
+            value = eng.cell_value(target, f"{_col_letter(c)}{header_row}")
+            headers.append(clean_text(value) or f"列{c}")
         rows: list[list[object]] = []
-        for r in range(start, max_row + 1):
+        for r in range(header_row + 1, max_row + 1):
             row = [eng.cell_value(target, f"{_col_letter(c)}{r}") for c in range(1, max_col + 1)]
             if all(v is None or str(v).strip() == "" for v in row):
                 continue

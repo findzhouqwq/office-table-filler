@@ -163,5 +163,39 @@ class FillerTests(unittest.TestCase):
         self.assertEqual(table.cell(1, 1).text, "E010")
 
 
+    def test_cross_files_does_not_overwrite_target(self):
+        """An empty output dir must not destroy the source template."""
+        target = os.path.join(self.samples, "samples", "target.xlsx")
+        work_dir = os.path.join(self.tmp, "in_place")
+        os.makedirs(work_dir, exist_ok=True)
+        local_target = os.path.join(work_dir, "target.xlsx")
+        shutil.copy2(target, local_target)
+        before = os.path.getmtime(local_target)
+        report = fill_cross_files(CrossFillRequest(
+            source_paths=[os.path.join(self.samples, "samples", "source.csv")],
+            target_paths=[local_target],
+            output_dir=work_dir,
+            mappings=[MappingEntry(source="姓名", target=TargetRef(kind="xlsx_cell", cell="K1"))],
+        ))
+        self.assertGreater(report.written, 0)
+        self.assertTrue(os.path.exists(os.path.join(work_dir, "target_filled.xlsx")))
+        self.assertEqual(os.path.getmtime(local_target), before)
+
+    def test_text_fill_default_plan_uses_headers(self):
+        target = os.path.join(self.samples, "samples", "target.xlsx")
+        out = self._out("text_default.xlsx")
+        shutil.copy2(target, out)
+        report = fill_from_text(TextFillRequest(
+            records=[{"姓名": "周九", "工号": "E099"}],
+            target_path=out, output_path=out, append=True,
+        ))
+        self.assertEqual(report.written, 1)
+        from app.core.spreadsheet import OpenpyxlEngine
+        eng = OpenpyxlEngine(); eng.open(out)
+        self.assertEqual(eng.cell_value("员工表", "A4"), "周九")
+        self.assertEqual(eng.cell_value("员工表", "B4"), "E099")
+        eng.close()
+
+
 if __name__ == "__main__":
     unittest.main()

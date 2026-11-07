@@ -132,19 +132,26 @@ class TextTab(QWidget):
         self.target_edit.setText(files[0])
         self.output_edit.setText(files[0])
         from ..core.spreadsheet import OpenpyxlEngine
+        eng = OpenpyxlEngine()
         try:
-            eng = OpenpyxlEngine()
             eng.open(files[0])
+            names = eng.sheets()
             self.sheet_combo.clear()
-            self.sheet_combo.addItems(eng.sheets())
+            self.sheet_combo.addItems(names)
             sheet = self.sheet_combo.currentText()
-            headers = [clean_text(v) for v in
-                       [eng.cell_value(sheet, f"{c}1") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"][:eng.dims(sheet)[1]]
-                       if v]
-            self.target_header_edit.setPlainText("、".join(h for h in headers if h))
-            eng.close()
+            max_row, max_col = eng.dims(sheet)
+            header_row = max(1, self.header_spin.value())
+            from openpyxl.utils import get_column_letter
+            headers = []
+            for col in range(1, max_col + 1):
+                value = clean_text(eng.cell_value(sheet, f"{get_column_letter(col)}{header_row}"))
+                if value:
+                    headers.append(value)
+            self.target_header_edit.setPlainText("、".join(headers))
         except Exception as exc:
             show_error(self, "无法读取表格", str(exc))
+        finally:
+            eng.close()
 
     def _pick_output(self) -> None:
         path = save_file(self, "另存为")

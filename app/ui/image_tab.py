@@ -205,14 +205,15 @@ class ImageTab(QWidget):
 
     def _load_sheets(self, path: str) -> None:
         from ..core.spreadsheet import OpenpyxlEngine
+        eng = OpenpyxlEngine()
         try:
-            eng = OpenpyxlEngine()
             eng.open(path)
             names = eng.sheets()
-            eng.close()
         except Exception as exc:
             show_error(self, "无法读取表格", str(exc))
             return
+        finally:
+            eng.close()
         self.sheet_combo.clear()
         self.sheet_combo.addItems(names)
 

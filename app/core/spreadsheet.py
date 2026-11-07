@@ -35,19 +35,22 @@ _EXCEL_PROGIDS = ("Excel.Application", "ET.Application", "ket.Application", "wps
 
 
 def excel_progid() -> str | None:
-    """Return the first registered Excel/WPS spreadsheet ProgID, or ``None``."""
+    """Return the first registered Excel/WPS spreadsheet ProgID, or ``None``.
+
+    The Windows registry is probed instead of dispatching COM: creating an
+    application instance only to test whether it exists would leak an orphan
+    Excel process on every call (this function is called at startup and for
+    every engine lookup).
+    """
+    try:
+        import winreg
+    except ImportError:  # not running on Windows
+        return None
     for progid in _EXCEL_PROGIDS:
         try:
-            import win32com.client  # noqa: F401
-            from win32com.client import gencache  # noqa: F401
-
-            import pythoncom
-
-            pythoncom.CoInitialize()
-            win32com.client.Dispatch(progid)
-            pythoncom.CoUninitialize()
-            return progid
-        except Exception:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, rf"{progid}\CLSID"):
+                return progid
+        except OSError:
             continue
     return None
 
@@ -142,7 +145,39 @@ class SpreadsheetEngine:
 # openpyxl implementation
 # ---------------------------------------------------------------------------
 
-_COORD_RE = re.compile(r"^\$?[A-Za-z]{1,3}\$?\d{1,7}$")
+_COORD_RE = re.compile(r"^\$?([A-Za-z]{1,3})\$?(\d{1,7})$")
+_MAX_COLUMN = 16384
+_MAX_ROW = 1048576
+
+
+def _validate_coord(coord: str) -> None:
+    """Reject coordinates outside the range Excel can represent."""
+    match = _COORD_RE.match(coord or "")
+    if not match:
+        raise FillError(f"非法单元格地址：{coord}")
+    if column_index_from_string(match.group(1).upper()) > _MAX_COLUMN:
+        raise FillError(f"单元格地址超出 Excel 列范围：{coord}")
+    if int(match.group(2)) > _MAX_ROW:
+        raise FillError(f"单元格地址超出 Excel 行范围：{coord}")
+
+
+def _set_cell_value(cell, value: object) -> None:
+    """Assign *value* without letting untrusted text become a live formula.
+
+    OCR output and imported data may start with ``=`` (e.g.
+    ``=HYPERLINK(...)``).  openpyxl treats such strings as formulas, which is a
+    spreadsheet-injection risk, so force them to be plain text.
+    """
+    cell.value = value
+    if isinstance(value, str) and value.startswith("="):
+        cell.data_type = "s"
+
+
+def _set_com_value(cell, value: object) -> None:
+    """COM counterpart of :func:`_set_cell_value`."""
+    if isinstance(value, str) and value.startswith("="):
+        cell.NumberFormat = "@"
+    cell.Value = value
 
 
 class OpenpyxlEngine(SpreadsheetEngine):
@@ -206,8 +241,7 @@ class OpenpyxlEngine(SpreadsheetEngine):
 
     def cell_value(self, sheet: str, coord: str) -> object:
         ws = self._ws(sheet)
-        if not _COORD_RE.match(coord or ""):
-            raise FillError(f"非法单元格地址：{coord}")
+        _validate_coord(coord)
         return ws[coord].value
 
     def cell_exists(self, sheet: str, coord: str) -> bool:
@@ -237,14 +271,13 @@ class OpenpyxlEngine(SpreadsheetEngine):
     # -- writing -----------------------------------------------------------
     def write_value(self, sheet: str, coord: str, value: object) -> None:
         ws = self._ws(sheet)
-        if not _COORD_RE.match(coord or ""):
-            raise FillError(f"非法单元格地址：{coord}")
-        ws[coord] = value
+        _validate_coord(coord)
+        _set_cell_value(ws[coord], value)
 
     def write_row(self, sheet: str, row: int, values: Sequence[object]) -> None:
         ws = self._ws(sheet)
         for offset, value in enumerate(values, start=1):
-            ws.cell(row=row, column=offset, value=value)
+            _set_cell_value(ws.cell(row=row, column=offset), value)
 
     def write_rows(self, sheet: str, start_row: int, rows: Iterable[Sequence[object]]) -> int:
         ws = self._ws(sheet)
@@ -280,30 +313,59 @@ class ExcelComEngine(SpreadsheetEngine):
         self._app = None
         self._wb = None
         self._visible = False
+        self._com_initialized = False
 
     def open(self, path: str, keep_vba: bool = False) -> None:
         import pythoncom  # type: ignore
         import win32com.client  # type: ignore
 
+        if not os.path.exists(path):
+            raise EngineError(f"文件不存在：{path}")
         pythoncom.CoInitialize()
-        self._app = win32com.client.Dispatch(self.progid)
+        self._com_initialized = True
         try:
-            self._app.Visible = False
-            self._app.DisplayAlerts = False
+            # DispatchEx creates a private instance, so Quit() will never close
+            # a workbook the user has open in their own Excel/WPS window.
+            self._app = win32com.client.DispatchEx(self.progid)
+            try:
+                self._app.Visible = False
+                self._app.DisplayAlerts = False
+            except Exception:
+                pass
+            self.path = os.path.abspath(path)
+            self._wb = self._app.Workbooks.Open(self.path)
+            self._visible = False
         except Exception:
-            pass
-        self.path = os.path.abspath(path)
-        self._wb = self._app.Workbooks.Open(self.path)
-        self._visible = False
+            self.close()
+            raise
 
     def close(self) -> None:
         try:
             if self._wb is not None:
-                self._wb.Close(SaveChanges=False)
+                try:
+                    self._wb.Close(SaveChanges=False)
+                except Exception:
+                    pass
+                self._wb = None
+            if self._app is not None:
+                try:
+                    self._app.Quit()
+                except Exception:
+                    pass
+                self._app = None
         finally:
-            self._wb = None
+            if self._com_initialized:
+                try:
+                    import pythoncom  # type: ignore
+
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+                self._com_initialized = False
 
     def save(self, path: str | None = None) -> str:
+        if self._wb is None:
+            raise FillError("工作簿尚未打开。")
         target = os.path.abspath(path or self.path)
         ensure_parent(target)
         self._wb.SaveAs(target)
@@ -352,12 +414,13 @@ class ExcelComEngine(SpreadsheetEngine):
         return {k: get_column_letter(v) for k, v in mapping.items()}
 
     def write_value(self, sheet: str, coord: str, value: object) -> None:
-        self._ws(sheet).Range(coord).Value = value
+        _validate_coord(coord)
+        _set_com_value(self._ws(sheet).Range(coord), value)
 
     def write_row(self, sheet: str, row: int, values: Sequence[object]) -> None:
         ws = self._ws(sheet)
         for offset, value in enumerate(values, start=1):
-            ws.Cells(row, offset).Value = value
+            _set_com_value(ws.Cells(row, offset), value)
 
     def write_rows(self, sheet: str, start_row: int, rows: Iterable[Sequence[object]]) -> int:
         written = 0

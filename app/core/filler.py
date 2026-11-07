@@ -12,15 +12,15 @@ import re
 import shutil
 from dataclasses import dataclass, field
 
-from .errors import DataError, FillError
+from .errors import DataError, FillError, MappingError
 from .models import (ExtractionRule, FillReport, FillRecord, FieldMapping,
-                     FillOptions, MappingEntry, TargetRef)
+                     MappingEntry)
 from .ocr import OcrEngine, get_ocr_engine
 from .spreadsheet import OpenpyxlEngine, get_spreadsheet_engine
 from .table_detect import build_grid_from_ocr, cluster_words_to_grid
-from .utils import apply_transform, clean_text
+from .utils import apply_transform, clean_text, norm_header
 from .mapping import extract_fields, parse_labeled_lines, resolve_column
-from .data_io import TableData, load_table, load_docx, load_pptx
+from .data_io import TableData, load_table
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +76,10 @@ class CrossFillRequest:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_MAX_COL = 16384
+_MAX_ROW = 1048576
+
+
 def _col_letter(index: int) -> str:
     index = int(index)
     result = ""
@@ -92,14 +96,10 @@ def _split_anchor(anchor: str) -> tuple[int, int]:
     col = 0
     for ch in match.group(1).upper():
         col = col * 26 + (ord(ch) - 64)
-    return int(match.group(2)), col
-
-
-def _output_path(output: str, target: str, suffix: str = "") -> str:
-    if output:
-        return output
-    base, ext = os.path.splitext(target)
-    return base + (suffix or "") + ext
+    row = int(match.group(2))
+    if not 1 <= col <= _MAX_COL or not 1 <= row <= _MAX_ROW:
+        raise FillError(f"起始单元格超出 Excel 范围：{anchor}")
+    return row, col
 
 
 def _copy_to_output(src: str, output: str) -> str:
@@ -126,6 +126,17 @@ def _letter_to_index(letter: str) -> int:
     return index
 
 
+def _field_value(fields: dict, source: str):
+    """Look a source field up exactly first, then ignoring case/spacing."""
+    if source in fields:
+        return fields[source]
+    wanted = norm_header(source)
+    for key, value in fields.items():
+        if norm_header(key) == wanted:
+            return value
+    return ""
+
+
 def _row_values_from_plan(plan: list[FieldMapping], fields: dict,
                           header_map: dict[str, str], width: int) -> list[object]:
     """Build a row where ``plan[i]`` writes the matching source field."""
@@ -134,21 +145,33 @@ def _row_values_from_plan(plan: list[FieldMapping], fields: dict,
         for mapping in plan:
             try:
                 col_letter = resolve_column(mapping.target, header_map)
-            except Exception:
-                col_letter = mapping.target.upper() if mapping.target else "A"
-            slots.append((_letter_to_index(col_letter), mapping))
+            except MappingError as exc:
+                raise FillError(f"无法解析目标列 “{mapping.target}”：{exc}") from exc
+            index = _letter_to_index(col_letter)
+            if not 1 <= index <= _MAX_COL:
+                raise FillError(f"目标列超出 Excel 范围：{mapping.target}")
+            slots.append((index, mapping))
     elif fields:
         # No plan given: lay the fields out in order, one per column.
         slots = [(i + 1, FieldMapping(target="", source=key)) for i, key in enumerate(fields)]
-    width = max(width, max([s for s, _ in slots], default=0))
+    width = min(max(width, max((s for s, _ in slots), default=0), 1), _MAX_COL)
     row: list[object] = ["" for _ in range(width)]
     for index, mapping in slots:
-        value = str(fields.get(mapping.source, "") or "")
+        value = _field_value(fields, mapping.source)
+        value = "" if value is None else str(value)
         if value == "" and mapping.default:
             value = mapping.default
-        if index - 1 < width:
+        if index <= width:
             row[index - 1] = apply_transform(value, mapping.transform)
     return row
+
+
+def _default_plan(records: list[dict], header_map: dict[str, str]) -> list[FieldMapping]:
+    """Map every detected header to the matching source field by name."""
+    keys = list(records[0].keys()) if records else []
+    by_norm = {norm_header(key): key for key in keys}
+    return [FieldMapping(target=col, source=by_norm.get(key, key))
+            for key, col in header_map.items()]
 
 
 # ---------------------------------------------------------------------------
@@ -205,21 +228,27 @@ def fill_from_images(request: ImageFillRequest,
                 if not matrix:
                     report.warn(f"{os.path.basename(image_path)}：未识别到表格内容。")
                     continue
+                # "写入位置" applies to the whole block: shift grid rows so
+                # that the first cell lands on the requested column.
+                offset = anchor_col - 1
                 for row_index, row in enumerate(matrix):
                     trimmed = [clean_text(v) for v in row]
                     if not any(trimmed):
                         continue
-                    engine.write_row(sheet, cursor_row, trimmed)
+                    values = ([""] * offset + trimmed) if offset else trimmed
+                    engine.write_row(sheet, cursor_row, values)
                     report.add(FillRecord(
-                        target=f"{sheet}!{_col_letter(1)}{cursor_row}",
+                        target=f"{sheet}!{_col_letter(anchor_col)}{cursor_row}",
                         value=" | ".join(trimmed), source=os.path.basename(image_path),
                         file=image_path,
                     ))
                     cursor_row += 1
-    finally:
+        # Only persist on success: saving in ``finally`` would overwrite the
+        # target with a partially filled workbook when OCR or writing fails.
         output = request.output_path or request.target_path
         engine.save(output)
         report.output_path = output
+    finally:
         engine.close()
     report.warn(f"共处理 {len(request.images)} 张图片，写入 {report.written} 处。")
     return report
@@ -268,9 +297,7 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
             start_row = ws.max_row + 1 if ws.max_row > 1 else 1
         else:
             start_row = 1
-        plan = request.column_plan or [
-            FieldMapping(target=h, source=h) for h in header_map.values()
-        ]
+        plan = request.column_plan or _default_plan(records, header_map)
         for offset, record in enumerate(records):
             row = _row_values_from_plan(plan, record, header_map, max(width, len(plan)))
             eng.write_row(sheet, start_row + offset, row)
@@ -279,10 +306,10 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
                 value=" | ".join(str(v) for v in row),
                 source=f"记录{offset + 1}", file=request.target_path,
             ))
-    finally:
         output = request.output_path or request.target_path
         eng.save(output)
         report.output_path = output
+    finally:
         eng.close()
     return report
 
@@ -375,6 +402,8 @@ def _apply_docx(path: str, output: str, entries: list[MappingEntry],
             rows_data = record.get("_rows") or []
             if not isinstance(rows_data, list) or not rows_data:
                 continue
+            if ref.row_start < 0 or ref.row_start >= len(table.rows):
+                raise FillError(f"Word 表格{ref.table + 1} 起始行超出范围：{ref.row_start}")
             header = [cell.text for cell in table.rows[ref.row_start].cells]
             for r_offset, data_row in enumerate(rows_data):
                 target_row = ref.row_start + 1 + r_offset
@@ -407,6 +436,8 @@ def _apply_pptx(path: str, output: str, entries: list[MappingEntry],
         ref = entry.target
         value = apply_transform(record.get(entry.source, entry.default), entry.transform)
         if ref.kind == "pptx_table_cell":
+            if ref.slide < 0 or ref.slide >= len(prs.slides):
+                raise FillError(f"PPT 页码超出范围：{ref.slide + 1}")
             slide = prs.slides[ref.slide]
             shape = _find_table_shape(slide, ref.table)
             if shape is None:
@@ -486,13 +517,16 @@ def _apply_xlsx(path: str, output: str, entries: list[MappingEntry],
                 target_sheet = ref.sheet or sheet
                 if ref.kind == "xlsx_cell":
                     coord = ref.cell or "A1"
-                    advance = ref.row if ref.row >= 0 else 1
+                    advance = ref.row if ref.row > 0 else 1
                     if index > 0:
                         coord = _advance_coord(coord, advance * index)
                     eng.write_value(target_sheet, coord, value)
                     report.add(FillRecord(target=f"{target_sheet}!{coord}", value=value,
                                           source=entry.source, file=output))
                 elif ref.kind == "xlsx_rows":
+                    # The whole source table is written once, not once per record.
+                    if index > 0:
+                        continue
                     rows = record.get("_rows")
                     if not rows:
                         report.warn("没有可写入的行数据（_rows 为空）。")
@@ -503,8 +537,8 @@ def _apply_xlsx(path: str, output: str, entries: list[MappingEntry],
                                           source=entry.source, file=output))
                 else:
                     raise FillError(f"不支持的目标类型：{ref.kind}")
-    finally:
         eng.save(output)
+    finally:
         eng.close()
 
 
@@ -516,7 +550,20 @@ def _advance_coord(coord: str, steps: int) -> str:
         return coord
     prefix, row_part = match.group(1), match.group(2)
     row = int(re.sub(r"[^0-9]", "", row_part))
+    if row + steps > _MAX_ROW:
+        raise FillError(f"单元格行号超出 Excel 范围：{coord} + {steps}")
     return f"{prefix}{row + steps}"
+
+
+def _planned_output(output_dir: str, target: str, index: int, total: int,
+                    overwrite: bool) -> str:
+    """Return the output path, never silently overwriting the source file."""
+    out = _batch_output(output_dir, os.path.basename(target), index, total)
+    if os.path.abspath(out) == os.path.abspath(target) and not overwrite:
+        stem, ext = os.path.splitext(os.path.basename(target))
+        suffix = f"_{index + 1:03d}" if total > 1 else ""
+        out = os.path.join(output_dir, f"{stem}{suffix}_filled{ext}")
+    return out
 
 
 def fill_cross_files(request: CrossFillRequest) -> FillReport:
@@ -549,20 +596,20 @@ def fill_cross_files(request: CrossFillRequest) -> FillReport:
             report.warn(f"跳过 {base}：没有适用于该目标的映射。")
             continue
         if lower.endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
-            out = os.path.join(output_dir, base)
+            out = _planned_output(output_dir, target, 0, 1, request.overwrite)
             _copy_to_output(target, out)
             _apply_xlsx(target, out, entries, records, report,
                         sheet_name=request.sheet_for_target)
         elif lower.endswith((".docx", ".docm")):
             used = records if request.batch_by_row else [records[0]]
             for index, record in enumerate(used):
-                out = _batch_output(output_dir, base, index, len(used))
+                out = _planned_output(output_dir, target, index, len(used), request.overwrite)
                 _copy_to_output(target, out)
                 _apply_docx(target, out, entries, index, record, report)
         elif lower.endswith((".pptx", ".pptm")):
             used = records if request.batch_by_row else [records[0]]
             for index, record in enumerate(used):
-                out = _batch_output(output_dir, base, index, len(used))
+                out = _planned_output(output_dir, target, index, len(used), request.overwrite)
                 _copy_to_output(target, out)
                 _apply_pptx(target, out, entries, index, record, report)
         else:

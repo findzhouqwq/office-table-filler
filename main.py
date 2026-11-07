@@ -17,11 +17,22 @@ import traceback
 
 def setup_logging() -> str:
     log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "table_filler.log")
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    try:
+        handlers.insert(0, logging.FileHandler(log_path, encoding="utf-8"))
+    except OSError:
+        # Installed under Program Files / a read-only folder: fall back to temp.
+        import tempfile
+
+        log_path = os.path.join(tempfile.gettempdir(), "table_filler.log")
+        try:
+            handlers.insert(0, logging.FileHandler(log_path, encoding="utf-8"))
+        except OSError:
+            pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(log_path, encoding="utf-8"),
-                  logging.StreamHandler(sys.stdout)],
+        handlers=handlers,
     )
     return log_path
 

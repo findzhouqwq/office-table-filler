@@ -282,22 +282,28 @@ class ManualOcrEngine(OcrEngine):
 # ---------------------------------------------------------------------------
 
 def available_engines() -> list[str]:
+    """List usable OCR engines without loading any model.
+
+    Constructing :class:`RapidOcrEngine` loads the ONNX models (tens of MB),
+    so probing by import/executable avoids a slow startup for a check that
+    only feeds a combo box.
+    """
+    import importlib.util
+    import shutil
+
+    def module_exists(name: str) -> bool:
+        try:
+            return importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            return False
+
     engines: list[str] = []
-    try:
-        RapidOcrEngine()
+    if module_exists("rapidocr_onnxruntime"):
         engines.append("rapidocr")
-    except Exception:
-        pass
-    try:
-        TesseractEngine()
+    if module_exists("pytesseract") and shutil.which("tesseract"):
         engines.append("tesseract")
-    except Exception:
-        pass
-    try:
-        WindowsOcrEngine()
+    if module_exists("winsdk"):
         engines.append("windows")
-    except Exception:
-        pass
     return engines
 
 

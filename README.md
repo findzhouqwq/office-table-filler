@@ -56,7 +56,7 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 | 自动下载程序本体 | 从 GitHub Release 获取 `app.zip` + 签名清单，镜像依次 `ghfast.top` → `gh-proxy.com` → GitHub 官方 |
 | 完整性校验 | 清单用内置 RSA 公钥验签，`app.zip` 再校验 SHA256 与大小；任一不符自动切换下一源 |
 | 自动准备 Python | 若未检测到 Python 3.10–3.13，自动下载 Python 3.12.8：华为云 → 阿里云 → Python 官方，并校验 Authenticode 签名 |
-| VC++ 运行库 | 自动检测 Microsoft Visual C++ 2015–2022 x64 运行库，缺失时静默安装微软官方 `vc_redist.x64.exe`（校验微软签名） |
+| VC++ 运行库 | 自动检测 Microsoft Visual C++ 2015–2022 x64 运行库，缺失时静默安装微软官方 `vc_redist.x64.exe`（校验微软签名；该组件可能触发一次 UAC 授权） |
 | 自动安装依赖 | 创建独立 `.venv`，pip 依次尝试清华 PyPI → 阿里云 PyPI → PyPI 官方 |
 | 卸载 | 「设置 → 应用」中卸载，或运行安装目录下的 `uninstall.ps1`；会清理快捷方式、任务栏固定项与注册表 |
 | 卸载时的模板 | 卸载确认框可选择是否删除 `%APPDATA%\TableFiller`（用户模板与设置），默认选择“否”即保留 |

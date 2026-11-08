@@ -794,7 +794,8 @@ $answer = [System.Windows.Forms.MessageBox]::Show(
     "确定要卸载 表格批量填写工具 吗？`r`n`r`n程序目录：`r`n$dir`r`n`r`n是否同时删除用户模板和设置？`r`n选择“是”删除，选择“否”保留。",
     '卸载 表格批量填写工具',
     [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
-    [System.Windows.Forms.MessageBoxIcon]::Question)
+    [System.Windows.Forms.MessageBoxIcon]::Question,
+    [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
 if ($answer -eq [System.Windows.Forms.DialogResult]::Cancel) { exit }
 
 if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {

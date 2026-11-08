@@ -18,7 +18,7 @@ $script:AppName = '表格批量填写工具'
 $script:AppId = 'TableFiller'
 $script:Version = '1.1.0'
 # 发布清单验签公钥（对应私钥不随仓库分发，仅用于发布签名）
-$script:PublicKeyXml = '<RSAKeyValue><Modulus>t4DG91Ix7vVgE28a2vzkAILyXHzBKZXMt3ETld6nyo7ovXEvqQqriCmob/hOC5fYhpJW9V6TLvgpyU0lvkyLnoaZfgwa0H/fQeMeqx9d5SfTUd/BZKhNq3k5jwdrX+oNAtf4IzTxYfKJ6dikXOJEf7j/K4G+OthBYZ0lRxLdyYG6/ZVwjGvJXPBeu9N8dVefm0wF8lKrsgdShWvzS2kLfUZcFCAs6hYvizqm3iuQySuxKlbcIWBo179KAPNReLwnecQk2hxAogTJeTe/c0NOcuba/dScKxVwqwDUhcqX5xsnwH2bFdPn8lQQ4u9Nyct+ESHMcCvcu39EhUO+9Ih4xtIKsacOURN/QKuPJoKFlQ7AF6LRHZqZ1GUtuwzz5jt45H9ha798iz70PjlcRqFJQXQudMNAHjShdwZOqX8LxDZKyg319VA+hvVncLJZ0f6qrIPfMIKuUs5Q3pWREZKrTJNIj40sidTKGfq/N6gSdr4YbYx+Nr/H7ur6vxQC1x1N</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>'
+$script:PublicKeyXml = '<RSAKeyValue><Modulus>sE+1Bbzi7iQjmIiv8Lw/8jcBwiRR7l0Cq1Vb3x3vIge/FcIdY8fjDxmNSdLOWnJ7/WB1coL2hF0zObDd6abmiSkoqyz/tVjhvEfkAvLHg7jMNeWZjw90b6FLx4HlXU9JeJC07hJj7YpJ0NLTzXOuwDUhb3+CCmb/mCJRWThex6EPyOMpOGyA18DgRIzwqlLP2Ww+DUUsjg6K9NTGl9mlrRSENO5RvOxUOvBkkfXyxPrkDp2pndHt0q/AKXJYLmckOWcRSJh4okgTd69owxOfwIFBiSU9A/ObP7BbgMQKqBO4cPmH1EzeEb9syodCL5s+SpsBHodXz+Nl8vj1uSuSICz2rUnixnnwn1wZKqoHl4wEnUXDBWmfQhKY+9bQylaYVCDIDQS9F6v4/MJY+5vD7xcKrZMo2zIx7OICUO0ThqSHZjqObTyewEpRHeV1V/wo48a0D/2HTUXAw/5fAq+st/F8C4X30gycDIC1bvjaIMupQLUK+pcZvW4Qh4y/ZJUp</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>'
 $script:DefaultDir = Join-Path $env:LOCALAPPDATA 'Programs\TableFiller'
 $script:LogPath = Join-Path $env:TEMP ('TableFiller-setup-' + [Guid]::NewGuid().ToString('N') + '.log')
 $script:LogPos = 0

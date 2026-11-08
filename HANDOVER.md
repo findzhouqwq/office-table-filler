@@ -15,6 +15,16 @@
 | ② 文字填表 | 粘贴文本 / CSV / TXT / JSON / XLSX → Excel | 从聊天记录、报告里抽字段入表 |
 | ③ 跨文件填表 | 多源文件 → 多目标文件（Excel / Word / PPT） | 用 Excel 名单批量生成 Word 入职表、PPT 人员页 |
 
+日常办公增强（已实现）：
+
+| 能力 | 说明 |
+| --- | --- |
+| 模板保存 / 复用 | 每个页面顶部模板栏：保存、应用、删除、导入、导出 JSON |
+| 生成前预览 / 校验 | 先展示将写入的行、目标列和问题清单，有错误时禁止执行 |
+| 自动备份 / 安全输出 | 覆盖前生成 `文件名.bak-时间戳`，写入走临时文件 + 原子替换 |
+| PDF / 扫描件 | 图片页可直接选 PDF 逐页渲染后 OCR；文字 / 跨文件页支持带文字层 PDF |
+| 图形化安装程序 | 无控制台向导，自动下载程序与依赖，镜像失败自动回退 |
+
 ## 2. 快速开始
 
 ### 2.1 环境
@@ -24,6 +34,18 @@
 - 联网安装依赖（首次会下载 RapidOCR 的中文模型）
 
 ### 2.2 安装
+
+推荐使用图形化安装程序（详见 README「图形化安装程序」章节）：
+
+- `installer\TableFiller-Setup.exe`：编译好的无控制台安装向导（由 `installer\build-setup.bat` 生成）。
+- `installer\Install.vbs`：未编译时双击启动同一向导，同样不显示命令框。
+
+安装向导会自动完成：下载程序本体（镜像一 → 镜像二 → GitHub 官方）、
+检测或安装 Python 3.12（华为云 → 阿里云 → python.org）、
+创建 `.venv` 并安装依赖（清华 → 阿里云 → PyPI 官方），
+可选创建桌面 / 开始菜单 / 任务栏快捷方式，并注册卸载信息。
+
+手动安装（开发调试用）：
 
 ```bat
 cd office-table-filler
@@ -58,7 +80,7 @@ python demo.py
 python -m unittest discover -s tests -v
 ```
 
-共 34 个用例：工具函数、列映射、目标解析、表格引擎、三种填表、GUI 冒烟、真实 OCR 端到端。
+共 65 个用例：工具函数、列映射、目标解析、表格引擎、三种填表、模板、校验、预览、安全写入、PDF、GUI 冒烟。
 OCR 集成用例在缺少 `rapidocr-onnxruntime` 时自动跳过。
 
 ## 3. 架构
@@ -69,16 +91,26 @@ office-table-filler/
 ├── make_samples.py         生成演示样例
 ├── demo.py                 三种填表方式的端到端演示
 ├── run.bat / build.bat     一键运行 / 打包
+├── installer/              图形化安装程序
+│   ├── TableFillerSetup.ps1   WinForms 五页向导（下载 / 解压 / 依赖 / 快捷方式 / 卸载）
+│   ├── Install.vbs            无命令框启动向导
+│   ├── build-setup.bat        ps2exe 编译 TableFiller-Setup.exe
+│   └── TableFiller.ico        安装程序图标
 ├── requirements.txt
 ├── app/
 │   ├── core/               引擎层（与 UI 无关，可单独调用）
 │   │   ├── spreadsheet.py  表格引擎：openpyxl 直接读写 + Excel/WPS COM
-│   │   ├── data_io.py      读取 xlsx/csv/txt/json/docx/pptx
+│   │   ├── data_io.py      读取 xlsx/csv/txt/json/docx/pptx/pdf
 │   │   ├── ocr.py          OCR 引擎抽象：RapidOCR / Tesseract / Windows OCR
 │   │   ├── table_detect.py OpenCV 表格线检测 + 词聚类
 │   │   ├── mapping.py      字段提取规则 + 列匹配
 │   │   ├── targets.py      跨文件目标位置解析（紧凑字符串）
 │   │   ├── filler.py       三种填表方式的编排（核心）
+│   │   ├── templates.py    模板保存 / 读取 / 导入导出
+│   │   ├── validation.py   执行前校验
+│   │   ├── preview.py      执行前预览
+│   │   ├── safeio.py       自动备份 + 原子写入
+│   │   ├── pdf_io.py       PDF 文本提取 / 逐页渲染
 │   │   ├── models.py       数据结构
 │   │   ├── errors.py       用户可见异常
 │   │   └── utils.py        文本/数字/日期工具
@@ -87,6 +119,8 @@ office-table-filler/
 │       ├── image_tab.py    图片识别填表
 │       ├── text_tab.py     文字填表
 │       ├── cross_tab.py    跨文件填表
+│       ├── template_bar.py 模板工具栏
+│       ├── preview_dialog.py 预览 / 校验对话框
 │       ├── mapping_widgets.py  规则/映射表格控件
 │       └── common.py       文件对话框、后台线程
 └── tests/
@@ -129,6 +163,12 @@ office-table-filler/
   - `batch_by_row=True`：每个源记录生成一份目标文件（`template_001.docx` 等）。
   - `batch_by_row=False`：所有记录写进同一个文件。
 
+- **安全输出**：所有写文件走 `safeio.save_with_backup()`——先写临时文件再原子替换，
+  覆盖已有文件前生成 `文件名.bak-时间戳`；失败不会留下半成品。
+
+- **模板存储**：默认在用户配置目录（Windows `%APPDATA%\TableFiller\templates`），
+  可用环境变量 `TABLE_FILLER_HOME` 覆盖，便于测试或多套配置隔离。
+
 ## 4. 常见问题
 
 | 现象 | 原因 / 处理 |
@@ -138,6 +178,9 @@ office-table-filler/
 | 照片表格识别差 | 表格线检测对规整扫描/截图效果好；照片建议先截图裁正。 |
 | 图表/透视表丢失 | 直接读写引擎不保留复杂对象；改用 COM 引擎或装 Office/WPS。 |
 | pip 装依赖很慢 | 国内网络可加镜像：`pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple` |
+| 安装向导下载失败 | 安装程序已内置镜像回退（ghfast → gh-proxy → GitHub）；全部失败时检查网络/代理后重试。 |
+| 任务栏未自动固定 | Windows 10/11 限制较多；从开始菜单右键程序选择“固定到任务栏”即可。 |
+| 安装后启动无反应 | 查看安装目录下 `.venv\Scripts\python.exe` 是否存在；必要时删除安装目录重新安装。 |
 
 ## 5. 已知限制
 
@@ -150,34 +193,37 @@ office-table-filler/
 ## 6. 扩展点（建议的下一步）
 
 1. **透视校正**：在 `table_detect.detect_grid` 前加一步四点透视变换，提升照片表格准确率。
-2. **模板保存/加载**：把映射规则导出为 JSON，便于复用（当前 `MappingDoc` 已定义结构但未接 UI）。
-3. **更多 OCR**：接入 PaddleOCR / 百度/腾讯云 OCR，替换 `ocr.py` 中的引擎即可。
-4. **Excel 公式/样式保护**：直接读写时对公式单元格做保护标记，避免误覆盖。
-5. **目标单元格可视化选择**：跨文件填表目前靠手填位置参数，可做点击选单元格。
-6. **OnlyOffice 专用适配器**：OnlyOffice 无 COM，可加其文档服务器 API 适配（当前走 OOXML 已可用）。
-7. **打包**：`build.bat` 用 PyInstaller 打包为单 exe；注意 OCR 模型要用 `--collect-all rapidocr_onnxruntime`。
+2. **更多 OCR**：接入 PaddleOCR / 百度/腾讯云 OCR，替换 `ocr.py` 中的引擎即可。
+3. **Excel 公式/样式保护**：直接读写时对公式单元格做保护标记，避免误覆盖。
+4. **目标单元格可视化选择**：跨文件填表目前靠手填位置参数，可做点击选单元格。
+5. **OnlyOffice 专用适配器**：OnlyOffice 无 COM，可加其文档服务器 API 适配（当前走 OOXML 已可用）。
+6. **安装包签名**：为 `TableFiller-Setup.exe` 增加代码签名，减少 SmartScreen 提示。
 
 ## 7. 推送到 GitHub
 
-本机未安装 git，也不保存 GitHub 凭据。请自行安装 git 后执行：
+仓库地址：`https://github.com/findzhouqwq/office-table-filler`
 
-```bat
-cd D:\work\office-table-filler
-git init
+```bash
+cd office-table-filler
 git add .
-git commit -m "Initial commit: Windows Office/WPS/OnlyOffice table batch filler (GUI)"
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/office-table-filler.git
-git push -u origin main
+git commit -m "feat: 说明本次改动"
+git push origin main
 ```
 
-仓库地址模板：`https://github.com/<你的用户名>/office-table-filler.git`
+首次推送或更换机器时需要 GitHub 凭据：
 
-`.gitignore` 已排除 `.venv/`、`demo_output/`、`samples/`、日志与临时文件，仓库保持干净。
+- 已安装 gh：`gh auth login --web`，用浏览器输入设备码完成授权；
+- 或为 https 远程配置个人访问令牌（PAT）。
+
+约定：正常 commit 叠加历史，**不使用 force push**，旧版本始终保留。
+
+`.gitignore` 已排除 `.venv/`、`demo_output/`、`samples/`、日志、临时文件，
+以及构建产物 `installer/TableFiller-Setup.exe`，仓库保持干净。
 
 ## 8. 目录地址
 
-- 项目根目录：`D:\work\office-table-filler`
-- 虚拟环境：`D:\work\office-table-filler\.venv`
-- 样例数据：`D:\work\office-table-filler\samples`
-- 演示输出：`D:\work\office-table-filler\demo_output`
+- 当前工作区：`/workspace/office-table-filler`
+- 持久化副本：`/data/user/projects/office-table-filler`
+- Windows 本地示例：`D:\work\office-table-filler`
+- 开发虚拟环境：项目下 `.venv`
+- 样例数据 / 演示输出：`samples` / `demo_output`

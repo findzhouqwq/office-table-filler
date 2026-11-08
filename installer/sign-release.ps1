@@ -44,9 +44,9 @@ if ($dirty) {
     Write-Warning '工作区存在未提交改动；发布包只包含已提交内容（HEAD）。'
 }
 
-$zipPath = Join-Path $OutputDir 'app.zip'
-$manifestPath = Join-Path $OutputDir 'manifest.json'
-$sigPath = Join-Path $OutputDir 'manifest.sig'
+$zipPath = Join-Path $OutputDir ('app-' + $Version + '.zip')
+$manifestPath = Join-Path $OutputDir ('manifest-' + $Version + '.json')
+$sigPath = Join-Path $OutputDir ('manifest-' + $Version + '.sig')
 Remove-Item -LiteralPath $zipPath, $manifestPath, $sigPath -Force -ErrorAction SilentlyContinue
 
 Write-Host "[1/4] 打包提交 $commit …"
@@ -58,13 +58,13 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $zipPath)) {
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLower()
 $size = (Get-Item -LiteralPath $zipPath).Length
 
-Write-Host "[2/4] 生成 manifest.json …"
+Write-Host "[2/4] 生成清单 …"
 $manifest = [ordered]@{
     version = $Version
     commit  = $commit
     created = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     archive = [ordered]@{
-        name   = 'app.zip'
+        name   = ('app-' + $Version + '.zip')
         sha256 = $hash
         size   = $size
     }

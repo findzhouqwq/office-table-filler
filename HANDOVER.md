@@ -103,7 +103,7 @@ office-table-filler/
 │   ├── Install.vbs            无命令框启动向导
 │   ├── build-setup.bat        ps2exe 编译 TableFiller-Setup.exe（可选自动签名）
 │   ├── sign-setup.bat         signtool 代码签名
-│   ├── sign-release.ps1       生成 app.zip + 签名 manifest
+│   ├── sign-release.ps1       生成 app-<版本>.zip + 签名清单
 │   └── TableFiller.ico        安装程序图标
 ├── requirements.txt
 ├── app/
@@ -206,7 +206,7 @@ office-table-filler/
 3. **Excel 公式/样式保护**：直接读写时对公式单元格做保护标记，避免误覆盖。
 4. **目标单元格可视化选择**：跨文件填表目前靠手填位置参数，可做点击选单元格。
 5. **OnlyOffice 专用适配器**：OnlyOffice 无 COM，可加其文档服务器 API 适配（当前走 OOXML 已可用）。
-6. **发布自动化**：用 GitHub Actions 在打 tag 时自动生成 `app.zip`、签名清单并创建 Release。
+6. **发布自动化**：用 GitHub Actions 在打 tag 时自动生成 `app-<版本>.zip`、签名清单并创建 Release。
 
 ## 7. 推送到 GitHub
 
@@ -237,13 +237,15 @@ git push origin main
 # 1. 提交要发布的代码（发布包来自 HEAD）
 git add . && git commit -m "release: v1.1.0" && git push origin main
 
-# 2. 用私钥生成 app.zip + manifest.json + manifest.sig
+# 2. 用私钥生成 app-1.1.0.zip + manifest-1.1.0.json + manifest-1.1.0.sig
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
 pwsh -File installer\sign-release.ps1 -Version 1.1.0
 
 # 3. 上传为 Release 资产（安装程序使用 releases/latest/download）
-gh release create v1.1.0 dist\app.zip dist\manifest.json dist\manifest.sig --title "v1.1.0" --notes "发布说明"
+gh release create v1.1.0 dist\app-1.1.0.zip dist\manifest-1.1.0.json dist\manifest-1.1.0.sig --title "v1.1.0" --notes "发布说明"
 ```
+
+资产名带版本号，避免 CDN / 镜像缓存把旧清单混进新版本；安装程序按自身版本号取对应文件。
 
 代码签名（安装程序 EXE，可选但强烈建议）：
 

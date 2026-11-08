@@ -495,13 +495,15 @@ $jobScript = {
     }
 
     function Download-SignedApp {
-        param($Bases, [string]$ZipPath, [string]$ManifestPath, [string]$SigPath)
+        param($Bases, [string]$ZipPath, [string]$ManifestPath, [string]$SigPath, [string]$AssetVersion)
+        $manifestName = 'manifest-' + $AssetVersion + '.json'
+        $signatureName = 'manifest-' + $AssetVersion + '.sig'
         foreach ($base in $Bases) {
             try {
                 Log ('正在从 {0} 获取发布清单…' -f $base)
                 $ProgressPreference = 'SilentlyContinue'
-                Invoke-WebRequest -Uri ($base + '/manifest.json') -OutFile $ManifestPath -UseBasicParsing -TimeoutSec 60
-                Invoke-WebRequest -Uri ($base + '/manifest.sig') -OutFile $SigPath -UseBasicParsing -TimeoutSec 60
+                Invoke-WebRequest -Uri ($base + '/' + $manifestName) -OutFile $ManifestPath -UseBasicParsing -TimeoutSec 60
+                Invoke-WebRequest -Uri ($base + '/' + $signatureName) -OutFile $SigPath -UseBasicParsing -TimeoutSec 60
                 $manifestBytes = [System.IO.File]::ReadAllBytes($ManifestPath)
                 $signatureText = [System.IO.File]::ReadAllText($SigPath)
                 if (-not (Test-ManifestSignature $manifestBytes $signatureText)) {
@@ -589,7 +591,7 @@ $jobScript = {
         $zipPath = Join-Path $tempDir 'app.zip'
         $manifestPath = Join-Path $tempDir 'manifest.json'
         $sigPath = Join-Path $tempDir 'manifest.sig'
-        Download-SignedApp $releaseBases $zipPath $manifestPath $sigPath
+        Download-SignedApp $releaseBases $zipPath $manifestPath $sigPath $Version
 
         # 3. extract application
         Report 28 '正在解压程序本体…'

@@ -53,8 +53,8 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 | --- | --- |
 | 自定义安装位置 | 默认 `%LOCALAPPDATA%\Programs\TableFiller`，可浏览选择其他目录；安装在当前用户下，无需管理员权限 |
 | 附加任务 | 可勾选创建**桌面快捷方式**、**开始菜单快捷方式**、**固定到任务栏** |
-| 自动下载程序本体 | 从 GitHub Release 获取 `app.zip` + 签名清单，镜像依次 `ghfast.top` → `gh-proxy.com` → GitHub 官方 |
-| 完整性校验 | 清单用内置 RSA 公钥验签，`app.zip` 再校验 SHA256 与大小；任一不符自动切换下一源 |
+| 自动下载程序本体 | 从 GitHub Release 获取 `app-<版本>.zip` + `manifest-<版本>.json` + 签名，镜像依次 `ghfast.top` → `gh-proxy.com` → GitHub 官方 |
+| 完整性校验 | 清单用内置 RSA 公钥验签，`app-<版本>.zip` 再校验 SHA256 与大小；任一不符自动切换下一源 |
 | 自动准备 Python | 若未检测到 Python 3.10–3.13，自动下载 Python 3.12.8：华为云 → 阿里云 → Python 官方，并校验 Authenticode 签名 |
 | VC++ 运行库 | 自动检测 Microsoft Visual C++ 2015–2022 x64 运行库，缺失时静默安装微软官方 `vc_redist.x64.exe`（校验微软签名；该组件可能触发一次 UAC 授权） |
 | 自动安装依赖 | 创建独立 `.venv`，pip 依次尝试清华 PyPI → 阿里云 PyPI → PyPI 官方 |
@@ -68,8 +68,8 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 
 镜像只负责搬运字节，可信性由签名兜底：
 
-1. 安装程序内置发布公钥，只有用对应私钥签名的 `manifest.json` 才会被接受；
-2. 清单通过后，再校验 `app.zip` 的 **SHA256 + 文件大小**；
+1. 安装程序内置发布公钥，只有用对应私钥签名的 `manifest-<版本>.json` 才会被接受；
+2. 清单通过后，再校验 `app-<版本>.zip` 的 **SHA256 + 文件大小**；
 3. 校验失败会自动切换到下一个镜像；全部失败则中止安装，不会运行未经验证的程序；
 4. Python 安装包与 VC++ 运行库额外做 **Authenticode** 校验（分别要求 Python Software Foundation / Microsoft 签名）。
 
@@ -80,8 +80,9 @@ $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
 pwsh -File installer\sign-release.ps1 -Version 1.1.0
 ```
 
-生成 `dist\app.zip`、`dist\manifest.json`、`dist\manifest.sig` 后，作为 GitHub Release 资产上传；
-安装程序从 `releases/latest/download/` 获取并校验。
+生成 `dist\app-1.1.0.zip`、`dist\manifest-1.1.0.json`、`dist\manifest-1.1.0.sig` 后，作为 GitHub Release 资产上传；
+安装程序从 `releases/latest/download/` 获取并校验。资产名带版本号，
+可避免 CDN / 镜像缓存把旧版本的清单或安装包混进新版本。
 
 ### 代码签名与 SmartScreen
 

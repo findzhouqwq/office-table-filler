@@ -40,10 +40,17 @@
 - `installer\TableFiller-Setup.exe`：编译好的无控制台安装向导（由 `installer\build-setup.bat` 生成）。
 - `installer\Install.vbs`：未编译时双击启动同一向导，同样不显示命令框。
 
-安装向导会自动完成：下载程序本体（镜像一 → 镜像二 → GitHub 官方）、
-检测或安装 Python 3.12（华为云 → 阿里云 → python.org）、
+安装向导会自动完成：从 GitHub Release 下载程序本体（清单 RSA 验签 + SHA256 校验，
+镜像一 → 镜像二 → GitHub 官方）、检测或安装 Python 3.12（华为云 → 阿里云 → python.org，
+并校验 Authenticode）、检测并静默安装 VC++ 2015–2022 x64 运行库、
 创建 `.venv` 并安装依赖（清华 → 阿里云 → PyPI 官方），
 可选创建桌面 / 开始菜单 / 任务栏快捷方式，并注册卸载信息。
+
+升级与卸载约定：
+
+- 覆盖安装前，自动把旧版程序文件备份到 `%LOCALAPPDATA%\Programs\TableFiller-backup-<时间戳>`；
+- 用户模板位于 `%APPDATA%\TableFiller\templates`，升级不触碰；
+- 卸载时弹窗询问是否删除用户模板与设置（默认保留）。
 
 手动安装（开发调试用）：
 
@@ -92,9 +99,11 @@ office-table-filler/
 ├── demo.py                 三种填表方式的端到端演示
 ├── run.bat / build.bat     一键运行 / 打包
 ├── installer/              图形化安装程序
-│   ├── TableFillerSetup.ps1   WinForms 五页向导（下载 / 解压 / 依赖 / 快捷方式 / 卸载）
+│   ├── TableFillerSetup.ps1   WinForms 五页向导（校验 / 下载 / 依赖 / VC++ / 快捷方式 / 卸载）
 │   ├── Install.vbs            无命令框启动向导
-│   ├── build-setup.bat        ps2exe 编译 TableFiller-Setup.exe
+│   ├── build-setup.bat        ps2exe 编译 TableFiller-Setup.exe（可选自动签名）
+│   ├── sign-setup.bat         signtool 代码签名
+│   ├── sign-release.ps1       生成 app.zip + 签名 manifest
 │   └── TableFiller.ico        安装程序图标
 ├── requirements.txt
 ├── app/
@@ -197,7 +206,7 @@ office-table-filler/
 3. **Excel 公式/样式保护**：直接读写时对公式单元格做保护标记，避免误覆盖。
 4. **目标单元格可视化选择**：跨文件填表目前靠手填位置参数，可做点击选单元格。
 5. **OnlyOffice 专用适配器**：OnlyOffice 无 COM，可加其文档服务器 API 适配（当前走 OOXML 已可用）。
-6. **安装包签名**：为 `TableFiller-Setup.exe` 增加代码签名，减少 SmartScreen 提示。
+6. **发布自动化**：用 GitHub Actions 在打 tag 时自动生成 `app.zip`、签名清单并创建 Release。
 
 ## 7. 推送到 GitHub
 
@@ -218,7 +227,33 @@ git push origin main
 约定：正常 commit 叠加历史，**不使用 force push**，旧版本始终保留。
 
 `.gitignore` 已排除 `.venv/`、`demo_output/`、`samples/`、日志、临时文件，
-以及构建产物 `installer/TableFiller-Setup.exe`，仓库保持干净。
+以及构建产物 `installer/TableFiller-Setup.exe`、`dist/`，仓库保持干净。
+
+### 7.1 发布新版本（含完整性签名）
+
+安装程序只接受内置公钥对应的私钥签名的清单，因此发布必须走以下流程：
+
+```powershell
+# 1. 提交要发布的代码（发布包来自 HEAD）
+git add . && git commit -m "release: v1.1.0" && git push origin main
+
+# 2. 用私钥生成 app.zip + manifest.json + manifest.sig
+$env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
+pwsh -File installer\sign-release.ps1 -Version 1.1.0
+
+# 3. 上传为 Release 资产（安装程序使用 releases/latest/download）
+gh release create v1.1.0 dist\app.zip dist\manifest.json dist\manifest.sig --title "v1.1.0" --notes "发布说明"
+```
+
+代码签名（安装程序 EXE，可选但强烈建议）：
+
+```bat
+set SIGN_PFX=D:\certs\my.pfx
+set SIGN_PASSWORD=******
+installer\build-setup.bat
+```
+
+签名私钥**绝不提交**；丢失私钥后需要重新生成密钥对、更新安装器内置公钥并重新发布。
 
 ## 8. 目录地址
 

@@ -17,6 +17,8 @@ Add-Type -AssemblyName System.Drawing
 $script:AppName = '表格批量填写工具'
 $script:AppId = 'TableFiller'
 $script:Version = '1.1.0'
+# 发布清单验签公钥（对应私钥不随仓库分发，仅用于发布签名）
+$script:PublicKeyXml = '<RSAKeyValue><Modulus>t4DG91Ix7vVgE28a2vzkAILyXHzBKZXMt3ETld6nyo7ovXEvqQqriCmob/hOC5fYhpJW9V6TLvgpyU0lvkyLnoaZfgwa0H/fQeMeqx9d5SfTUd/BZKhNq3k5jwdrX+oNAtf4IzTxYfKJ6dikXOJEf7j/K4G+OthBYZ0lRxLdyYG6/ZVwjGvJXPBeu9N8dVefm0wF8lKrsgdShWvzS2kLfUZcFCAs6hYvizqm3iuQySuxKlbcIWBo179KAPNReLwnecQk2hxAogTJeTe/c0NOcuba/dScKxVwqwDUhcqX5xsnwH2bFdPn8lQQ4u9Nyct+ESHMcCvcu39EhUO+9Ih4xtIKsacOURN/QKuPJoKFlQ7AF6LRHZqZ1GUtuwzz5jt45H9ha798iz70PjlcRqFJQXQudMNAHjShdwZOqX8LxDZKyg319VA+hvVncLJZ0f6qrIPfMIKuUs5Q3pWREZKrTJNIj40sidTKGfq/N6gSdr4YbYx+Nr/H7ur6vxQC1x1N</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>'
 $script:DefaultDir = Join-Path $env:LOCALAPPDATA 'Programs\TableFiller'
 $script:LogPath = Join-Path $env:TEMP ('TableFiller-setup-' + [Guid]::NewGuid().ToString('N') + '.log')
 $script:LogPos = 0
@@ -405,7 +407,7 @@ function Read-NewLog {
 # Installation job
 # ---------------------------------------------------------------------------
 $jobScript = {
-    param($InstallDir, $Desktop, $StartMenu, $Taskbar, $LogPath, $Version)
+    param($InstallDir, $Desktop, $StartMenu, $Taskbar, $LogPath, $Version, $PublicKeyXml)
 
     $ErrorActionPreference = 'Stop'
     $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -425,10 +427,10 @@ $jobScript = {
         throw $Message
     }
 
-    $appSources = @(
-        @{ Name = '镜像一 (ghfast)'; Url = 'https://ghfast.top/https://github.com/findzhouqwq/office-table-filler/archive/refs/heads/main.zip' },
-        @{ Name = '镜像二 (gh-proxy)'; Url = 'https://gh-proxy.com/https://github.com/findzhouqwq/office-table-filler/archive/refs/heads/main.zip' },
-        @{ Name = 'GitHub 官方'; Url = 'https://github.com/findzhouqwq/office-table-filler/archive/refs/heads/main.zip' }
+    $releaseBases = @(
+        'https://ghfast.top/https://github.com/findzhouqwq/office-table-filler/releases/latest/download',
+        'https://gh-proxy.com/https://github.com/findzhouqwq/office-table-filler/releases/latest/download',
+        'https://github.com/findzhouqwq/office-table-filler/releases/latest/download'
     )
     $pythonSources = @(
         @{ Name = '华为云镜像'; Url = 'https://mirrors.huaweicloud.com/python/3.12.8/python-3.12.8-amd64.exe' },
@@ -441,24 +443,104 @@ $jobScript = {
         @{ Name = 'PyPI 官方'; Url = 'https://pypi.org/simple' }
     )
 
+    function Test-Authenticode {
+        param([string]$Path, [string]$SignerLike)
+        try {
+            $signature = Get-AuthenticodeSignature -LiteralPath $Path
+            if ($signature.Status -ne 'Valid') { return $false }
+            if ($SignerLike -and $signature.SignerCertificate.Subject -notmatch [regex]::Escape($SignerLike)) {
+                return $false
+            }
+            return $true
+        } catch {
+            return $false
+        }
+    }
+
+    function Test-ManifestSignature {
+        param([byte[]]$Data, [string]$SignatureBase64)
+        try {
+            $rsa = [System.Security.Cryptography.RSA]::Create()
+            $rsa.FromXmlString($PublicKeyXml)
+            $signature = [Convert]::FromBase64String($SignatureBase64.Trim())
+            return $rsa.VerifyData($Data, $signature,
+                [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+                [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        } catch {
+            return $false
+        }
+    }
+
     function Download-WithFallback {
-        param($Sources, [string]$Destination, [string]$Label)
+        param($Sources, [string]$Destination, [string]$Label, [string]$RequireSigner = '')
         foreach ($source in $Sources) {
             try {
                 Log ("正在从 {0} 下载{1}…" -f $source['Name'], $Label)
                 $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri $source['Url'] -OutFile $Destination -UseBasicParsing -TimeoutSec 180
-                if ((Test-Path -LiteralPath $Destination) -and (Get-Item -LiteralPath $Destination).Length -gt 1024) {
-                    Log ("已从 {0} 下载完成。" -f $source['Name'])
-                    return
+                if (-not (Test-Path -LiteralPath $Destination) -or (Get-Item -LiteralPath $Destination).Length -le 1024) {
+                    throw '文件大小异常'
                 }
-                throw '文件大小异常'
+                if ($RequireSigner -and -not (Test-Authenticode $Destination $RequireSigner)) {
+                    throw '数字签名校验失败'
+                }
+                Log ("已从 {0} 下载完成。" -f $source['Name'])
+                return
             } catch {
                 Log ("{0} 下载失败：{1}" -f $source['Name'], $_.Exception.Message)
                 Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
             }
         }
         Fail ("{0}：所有下载源均失败，请检查网络后重试。" -f $Label)
+    }
+
+    function Download-SignedApp {
+        param($Bases, [string]$ZipPath, [string]$ManifestPath, [string]$SigPath)
+        foreach ($base in $Bases) {
+            try {
+                Log ('正在从 {0} 获取发布清单…' -f $base)
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri ($base + '/manifest.json') -OutFile $ManifestPath -UseBasicParsing -TimeoutSec 60
+                Invoke-WebRequest -Uri ($base + '/manifest.sig') -OutFile $SigPath -UseBasicParsing -TimeoutSec 60
+                $manifestBytes = [System.IO.File]::ReadAllBytes($ManifestPath)
+                $signatureText = [System.IO.File]::ReadAllText($SigPath)
+                if (-not (Test-ManifestSignature $manifestBytes $signatureText)) {
+                    throw '发布清单签名校验失败（可能被篡改或镜像过期）'
+                }
+                $manifest = [System.Text.Encoding]::UTF8.GetString($manifestBytes) | ConvertFrom-Json
+                Log ('发布清单已验签，版本 {0}。' -f $manifest.version)
+                Log '正在下载程序本体…'
+                Invoke-WebRequest -Uri ($base + '/' + $manifest.archive.name) -OutFile $ZipPath -UseBasicParsing -TimeoutSec 300
+                $actualHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLower()
+                $expectedHash = ([string]$manifest.archive.sha256).ToLower()
+                if ($actualHash -ne $expectedHash) {
+                    throw ('SHA256 不匹配（期望 {0}，实际 {1}）' -f $expectedHash, $actualHash)
+                }
+                if ($manifest.archive.size -and ([int64]$manifest.archive.size -ne (Get-Item -LiteralPath $ZipPath).Length)) {
+                    throw '文件大小与发布清单不一致'
+                }
+                Log ('程序本体校验通过（SHA256 {0}…）。' -f $actualHash.Substring(0, 16))
+                return
+            } catch {
+                Log ('源 {0} 失败：{1}' -f $base, $_.Exception.Message)
+                Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Fail '程序本体：所有下载源均失败或未通过签名校验。'
+    }
+
+    function Test-VCRuntime {
+        foreach ($key in @(
+            'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
+        )) {
+            try {
+                $value = Get-ItemProperty -Path $key -ErrorAction Stop
+                if ($value.Installed -eq 1) { return $true }
+            } catch { }
+        }
+        return ((Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\vcruntime140.dll')) -and
+                (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\msvcp140.dll')))
     }
 
     function Find-Python {
@@ -502,10 +584,12 @@ $jobScript = {
             New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
 
-        # 2. download application archive
-        Report 8 '正在下载程序本体…'
+        # 2. download application archive (signed manifest + SHA256)
+        Report 8 '正在下载并校验程序本体…'
         $zipPath = Join-Path $tempDir 'app.zip'
-        Download-WithFallback $appSources $zipPath '程序本体'
+        $manifestPath = Join-Path $tempDir 'manifest.json'
+        $sigPath = Join-Path $tempDir 'manifest.sig'
+        Download-SignedApp $releaseBases $zipPath $manifestPath $sigPath
 
         # 3. extract application
         Report 28 '正在解压程序本体…'
@@ -516,6 +600,25 @@ $jobScript = {
             Fail '安装包内容不完整：未找到 main.py。'
         }
         $sourceRoot = $mainFile.Directory.FullName
+
+        # 3.1 back up the previous installation (program files only)
+        Report 34 '正在检查旧版本…'
+        $existingMain = Join-Path $InstallDir 'main.py'
+        if (Test-Path -LiteralPath $existingMain) {
+            $backupRoot = Join-Path $env:LOCALAPPDATA ('Programs\TableFiller-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            try {
+                New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+                foreach ($item in @('main.py', 'app', 'requirements.txt', 'TableFiller.ico', 'uninstall.ps1')) {
+                    $sourceItem = Join-Path $InstallDir $item
+                    if (Test-Path -LiteralPath $sourceItem) {
+                        Copy-Item -LiteralPath $sourceItem -Destination $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                Log ('检测到旧版本，已备份程序文件到 ' + $backupRoot)
+            } catch {
+                Log ('备份旧版本失败（将继续安装）：' + $_.Exception.Message)
+            }
+        }
 
         Report 38 '正在复制程序文件…'
         try {
@@ -541,7 +644,7 @@ $jobScript = {
         if (-not $python) {
             Report 52 '未找到 Python 3.10-3.13，正在下载 Python 3.12…'
             $pythonInstaller = Join-Path $tempDir 'python-3.12.8-amd64.exe'
-            Download-WithFallback $pythonSources $pythonInstaller 'Python 3.12'
+            Download-WithFallback $pythonSources $pythonInstaller 'Python 3.12' 'Python Software Foundation'
             Report 58 '正在安装 Python 3.12（当前用户，无需管理员）…'
             $process = Start-Process -FilePath $pythonInstaller `
                 -ArgumentList '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_test=0', 'Include_launcher=1', 'SimpleInstall=1' `
@@ -555,6 +658,32 @@ $jobScript = {
             }
         }
         Log ("使用 Python：{0}" -f $python)
+
+        # 4.1 Visual C++ runtime (required by onnxruntime / opencv)
+        Report 60 '正在检查 VC++ 运行库…'
+        if (Test-VCRuntime) {
+            Log 'VC++ 运行库已安装。'
+        } else {
+            Log '未检测到 VC++ 2015-2022 运行库，正在自动安装…'
+            try {
+                $vcPath = Join-Path $tempDir 'vc_redist.x64.exe'
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' `
+                    -OutFile $vcPath -UseBasicParsing -TimeoutSec 300
+                if (-not (Test-Authenticode $vcPath 'Microsoft Corporation')) {
+                    throw 'VC++ 安装包数字签名校验失败'
+                }
+                $vcProcess = Start-Process -FilePath $vcPath `
+                    -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru -NoNewWindow
+                if ($vcProcess.ExitCode -in @(0, 1638, 3010)) {
+                    Log 'VC++ 运行库安装完成。'
+                } else {
+                    Log ('警告：VC++ 运行库安装返回退出码 {0}，如程序无法启动请手动安装。' -f $vcProcess.ExitCode)
+                }
+            } catch {
+                Log ('警告：VC++ 运行库自动安装失败：' + $_.Exception.Message)
+            }
+        }
 
         # 5. virtual environment
         Report 64 '正在创建独立运行环境…'
@@ -662,11 +791,15 @@ param()
 Add-Type -AssemblyName System.Windows.Forms
 $dir = '__INSTALL_DIR__'
 $answer = [System.Windows.Forms.MessageBox]::Show(
-    "确定要卸载 表格批量填写工具 吗？`r`n`r`n程序目录：`r`n$dir",
+    "确定要卸载 表格批量填写工具 吗？`r`n`r`n程序目录：`r`n$dir`r`n`r`n是否同时删除用户模板和设置？`r`n选择“是”删除，选择“否”保留。",
     '卸载 表格批量填写工具',
-    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
     [System.Windows.Forms.MessageBoxIcon]::Question)
-if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) { exit }
+if ($answer -eq [System.Windows.Forms.DialogResult]::Cancel) { exit }
+
+if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {
+    Remove-Item -LiteralPath (Join-Path $env:APPDATA 'TableFiller') -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 $shortcutName = '表格批量填写工具.lnk'
 $pinnedShortcut = Join-Path $env:APPDATA ('Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\' + $shortcutName)
@@ -807,7 +940,7 @@ $btnNext.Add_Click({
         $lblStatus.Text = '准备安装…'
         $script:Job = Start-Job -ScriptBlock $jobScript -ArgumentList `
             $script:InstallDir, $chkDesktop.Checked, $chkStartMenu.Checked, $chkTaskbar.Checked, `
-            $script:LogPath, $script:Version
+            $script:LogPath, $script:Version, $script:PublicKeyXml
         Show-Page 3
         $timer.Start()
         return

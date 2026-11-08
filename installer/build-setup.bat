@@ -10,6 +10,17 @@ echo [build] 编译无控制台安装程序 ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-ps2exe -inputFile '%~dp0TableFillerSetup.ps1' -outputFile '%~dp0TableFiller-Setup.exe' -noConsole -sta -iconFile '%~dp0TableFiller.ico' -title '表格批量填写工具 安装程序' -product '表格批量填写工具' -company 'findzhouqwq' -version '1.1.0.0'"
 if errorlevel 1 goto :err
 
+if not "%SIGN_PFX%"=="" goto :sign
+if not "%SIGN_THUMBPRINT%"=="" goto :sign
+echo [warn] 未设置签名证书，安装程序未签名，SmartScreen 可能拦截。
+goto :done
+
+:sign
+echo [build] 对安装程序进行代码签名 ...
+call "%~dp0sign-setup.bat" "%~dp0TableFiller-Setup.exe"
+if errorlevel 1 goto :err
+
+:done
 echo.
 echo [done] 已生成 installer\TableFiller-Setup.exe
 exit /b 0

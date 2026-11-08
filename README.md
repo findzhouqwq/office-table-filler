@@ -53,12 +53,50 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 | --- | --- |
 | 自定义安装位置 | 默认 `%LOCALAPPDATA%\Programs\TableFiller`，可浏览选择其他目录；安装在当前用户下，无需管理员权限 |
 | 附加任务 | 可勾选创建**桌面快捷方式**、**开始菜单快捷方式**、**固定到任务栏** |
-| 自动下载程序本体 | 依次尝试 `ghfast.top` 镜像 → `gh-proxy.com` 镜像 → GitHub 官方，任一成功即继续 |
-| 自动准备 Python | 若未检测到 Python 3.10–3.13，自动下载 Python 3.12.8：华为云镜像 → 阿里云镜像 → Python 官方，按当前用户静默安装 |
-| 自动安装依赖 | 创建独立 `.venv`，pip 依次尝试清华 PyPI 镜像 → 阿里云 PyPI 镜像 → PyPI 官方 |
-| 卸载 | 「设置 → 应用」中卸载，或运行安装目录下的 `uninstall.ps1`，会清理快捷方式、任务栏固定项与注册表信息 |
+| 自动下载程序本体 | 从 GitHub Release 获取 `app.zip` + 签名清单，镜像依次 `ghfast.top` → `gh-proxy.com` → GitHub 官方 |
+| 完整性校验 | 清单用内置 RSA 公钥验签，`app.zip` 再校验 SHA256 与大小；任一不符自动切换下一源 |
+| 自动准备 Python | 若未检测到 Python 3.10–3.13，自动下载 Python 3.12.8：华为云 → 阿里云 → Python 官方，并校验 Authenticode 签名 |
+| VC++ 运行库 | 自动检测 Microsoft Visual C++ 2015–2022 x64 运行库，缺失时静默安装微软官方 `vc_redist.x64.exe`（校验微软签名） |
+| 自动安装依赖 | 创建独立 `.venv`，pip 依次尝试清华 PyPI → 阿里云 PyPI → PyPI 官方 |
+| 卸载 | 「设置 → 应用」中卸载，或运行安装目录下的 `uninstall.ps1`；会清理快捷方式、任务栏固定项与注册表 |
+| 卸载时的模板 | 卸载确认框可选择是否删除 `%APPDATA%\TableFiller`（用户模板与设置），默认选择“否”即保留 |
+| 升级 | 覆盖安装前自动把旧版程序文件备份到 `%LOCALAPPDATA%\Programs\TableFiller-backup-<时间戳>`，用户模板不受影响 |
 
 > 安装过程需要联网下载程序与依赖，首次安装依赖体积较大，请耐心等待进度条完成。
+
+### 安全与完整性
+
+镜像只负责搬运字节，可信性由签名兜底：
+
+1. 安装程序内置发布公钥，只有用对应私钥签名的 `manifest.json` 才会被接受；
+2. 清单通过后，再校验 `app.zip` 的 **SHA256 + 文件大小**；
+3. 校验失败会自动切换到下一个镜像；全部失败则中止安装，不会运行未经验证的程序；
+4. Python 安装包与 VC++ 运行库额外做 **Authenticode** 校验（分别要求 Python Software Foundation / Microsoft 签名）。
+
+发布签名文件由 `installer/sign-release.ps1` 生成（需要私钥，私钥不进入仓库）：
+
+```powershell
+$env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
+pwsh -File installer\sign-release.ps1 -Version 1.1.0
+```
+
+生成 `dist\app.zip`、`dist\manifest.json`、`dist\manifest.sig` 后，作为 GitHub Release 资产上传；
+安装程序从 `releases/latest/download/` 获取并校验。
+
+### 代码签名与 SmartScreen
+
+未签名的 `TableFiller-Setup.exe` 和 PyInstaller 产物会触发
+“Windows 已保护你的电脑”以及部分杀软拦截。建议用代码签名证书签名：
+
+```bat
+set SIGN_PFX=D:\certs\my.pfx
+set SIGN_PASSWORD=******
+installer\build-setup.bat
+```
+
+`build-setup.bat` 检测到 `SIGN_PFX` 或 `SIGN_THUMBPRINT` 时会自动调用
+`installer\sign-setup.bat`，使用 `signtool` 做 SHA256 签名并打时间戳。
+签名后仍需一定下载量才能建立 SmartScreen 信誉；EV 证书可立即获得信誉。
 
 ### 生成安装程序 EXE
 
@@ -142,6 +180,8 @@ office-table-filler/
 │   ├── TableFillerSetup.ps1  图形化安装向导（PowerShell + WinForms）
 │   ├── Install.vbs           无命令框启动安装向导
 │   ├── build-setup.bat       编译 TableFiller-Setup.exe
+│   ├── sign-setup.bat        signtool 代码签名
+│   ├── sign-release.ps1      生成签名发布清单（app.zip / manifest）
 │   └── TableFiller.ico       安装程序图标
 ├── app/
 │   ├── core/

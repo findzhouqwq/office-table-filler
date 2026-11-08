@@ -18,6 +18,7 @@ preview_tab1.png
 /_*.py
 .wheels/
 installer/TableFiller-Setup.exe
+dist/
 
 # --- 编辑器 / 系统 ---
 .vscode/

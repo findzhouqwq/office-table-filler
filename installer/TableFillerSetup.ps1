@@ -504,12 +504,18 @@ $jobScript = {
                 $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri ($base + '/' + $manifestName) -OutFile $ManifestPath -UseBasicParsing -TimeoutSec 60
                 Invoke-WebRequest -Uri ($base + '/' + $signatureName) -OutFile $SigPath -UseBasicParsing -TimeoutSec 60
+                if ((Get-Item -LiteralPath $ManifestPath).Length -lt 50 -or (Get-Item -LiteralPath $SigPath).Length -lt 100) {
+                    throw '清单或签名文件内容异常'
+                }
                 $manifestBytes = [System.IO.File]::ReadAllBytes($ManifestPath)
                 $signatureText = [System.IO.File]::ReadAllText($SigPath)
                 if (-not (Test-ManifestSignature $manifestBytes $signatureText)) {
                     throw '发布清单签名校验失败（可能被篡改或镜像过期）'
                 }
                 $manifest = [System.Text.Encoding]::UTF8.GetString($manifestBytes) | ConvertFrom-Json
+                if (-not $manifest.archive -or -not $manifest.archive.name -or -not $manifest.archive.sha256) {
+                    throw '清单缺少 archive 字段'
+                }
                 Log ('发布清单已验签，版本 {0}。' -f $manifest.version)
                 Log '正在下载程序本体…'
                 Invoke-WebRequest -Uri ($base + '/' + $manifest.archive.name) -OutFile $ZipPath -UseBasicParsing -TimeoutSec 300
@@ -532,17 +538,40 @@ $jobScript = {
     }
 
     function Test-VCRuntime {
+        # 注册表：Installed=1 且版本属于 VC++ 2015-2022（14.x）
         foreach ($key in @(
             'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
             'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
         )) {
             try {
                 $value = Get-ItemProperty -Path $key -ErrorAction Stop
-                if ($value.Installed -eq 1) { return $true }
+                if ($value.Installed -eq 1 -and ([string]$value.Version) -like '14.*') { return $true }
             } catch { }
         }
-        return ((Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\vcruntime140.dll')) -and
-                (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\msvcp140.dll')))
+        # 回退：检查 System32 下两个关键 DLL 的文件版本 >= 14.0
+        $vcruntime = Join-Path $env:SystemRoot 'System32\vcruntime140.dll'
+        $msvcp = Join-Path $env:SystemRoot 'System32\msvcp140.dll'
+        if ((Test-Path -LiteralPath $vcruntime) -and (Test-Path -LiteralPath $msvcp)) {
+            try {
+                $major = (Get-Item -LiteralPath $vcruntime).VersionInfo.ProductMajorPart
+                if ($major -ge 14) { return $true }
+            } catch { }
+        }
+        return $false
+    }
+
+    function Test-PythonCandidate {
+        param([string]$Path)
+        if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+        if ($Path -like '*\WindowsApps\*') { return $false }  # 排除 Microsoft Store 占位符
+        try {
+            $output = & $Path -c "import sys; print('.'.join(map(str, sys.version_info[:2])))" 2>$null
+            if ($LASTEXITCODE -ne 0) { return $false }
+            $ver = [version](($output | Select-Object -First 1).Trim())
+            return ($ver -ge [version]'3.10' -and $ver -lt [version]'3.14')
+        } catch {
+            return $false
+        }
     }
 
     function Find-Python {
@@ -563,15 +592,16 @@ $jobScript = {
                 } catch { }
             }
         }
-        $pythonCmd = Get-Command python.exe -ErrorAction SilentlyContinue
-        if ($pythonCmd) { $candidates.Add($pythonCmd.Source) }
+        foreach ($name in @('python.exe', 'python3.exe')) {
+            $cmd = Get-Command $name -ErrorAction SilentlyContinue
+            if ($cmd) { $candidates.Add($cmd.Source) }
+        }
+        $seen = @{}
         foreach ($candidate in $candidates) {
-            if (-not (Test-Path -LiteralPath $candidate)) { continue }
-            if ($candidate -like '*\WindowsApps\*') { continue }
-            try {
-                & $candidate -c "import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)" *> $null
-                if ($LASTEXITCODE -eq 0) { return $candidate }
-            } catch { }
+            $normalized = $candidate.Trim().ToLower()
+            if ($seen.ContainsKey($normalized)) { continue }
+            $seen[$normalized] = $true
+            if (Test-PythonCandidate $candidate.Trim()) { return $candidate.Trim() }
         }
         return $null
     }

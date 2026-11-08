@@ -1,0 +1,80 @@
+# 更新报告（Changelog）
+
+本文档按版本号记录「表格批量填写工具」自首个提交以来的所有更新。
+版本号遵循语义化版本规范（`主.次.修订`）。
+
+> 说明：仓库仅对 `v1.1.0` 打有正式 Git 标签；早期版本号为按提交语义追溯标注，
+> 与提交记录的对应关系见各节末尾。
+
+---
+
+## v1.1.0 — 安装器安全与完整性增强
+
+- 发布清单验签：安装器内置 RSA 公钥，只接受对应私钥签名的 `manifest.json`，
+  镜像仅负责传输字节，可信性由签名兜底。
+- 程序本体双重校验：验签通过后再校验 `app.zip` 的 SHA256 与文件大小，任一不符自动切源。
+- Python 安装包与 VC++ 运行库增加 Authenticode 数字签名校验。
+- 自动检测 Microsoft Visual C++ 2015–2022 x64 运行库，缺失时静默安装微软官方 `vc_redist.x64.exe`。
+- 升级策略：覆盖安装前自动把旧版程序文件备份到
+  `%LOCALAPPDATA%\Programs\TableFiller-backup-<时间戳>`，用户模板不受影响。
+- 卸载策略：卸载确认框默认保留用户模板与设置（`%APPDATA%\TableFiller`）。
+- 发布资产改为按版本号命名（`app-1.1.0.zip` 等），避免镜像/CDN 缓存旧清单导致验签失败。
+- 检测逻辑优化：VC++ 版本精确判断、Python 候选去重与版本解析、清单字段完整性校验。
+- 新增 `sign-release.ps1`（发布清单签名）与 `sign-setup.bat`（代码签名）；
+  `build-setup.bat` 支持自动代码签名，降低 SmartScreen 拦截。
+- 签名密钥轮换（原私钥因环境重置丢失，重新生成密钥对并更新内置公钥）。
+
+提交：`701d907`、`2545eca`、`6eb9478`、`7cd698d`、`1f7ee38`（Git 标签：`v1.1.0`）
+
+---
+
+## v1.0.0 — 图形化安装程序
+
+- 新增无控制台的五页安装向导（欢迎 → 安装位置 → 附加任务 → 安装进度 → 完成）。
+- 自定义安装目录，默认 `%LOCALAPPDATA%\Programs\TableFiller`，当前用户安装、无需管理员权限。
+- 可勾选创建桌面快捷方式、开始菜单快捷方式、固定到任务栏。
+- 自动下载程序本体：镜像依次 `ghfast.top` → `gh-proxy.com` → GitHub 官方。
+- 自动准备 Python 3.12.8：华为云镜像 → 阿里云镜像 → Python 官方。
+- 自动安装依赖：清华 PyPI → 阿里云 PyPI → PyPI 官方。
+- 创建独立 `.venv`、`pythonw.exe` 快捷方式、写入卸载注册表、生成 `uninstall.ps1`。
+- 新增 `Install.vbs`（无命令框启动向导）、`build-setup.bat`（ps2exe 编译 EXE）、`TableFiller.ico`。
+
+提交：`0c27a88`、`cf39bf3`
+
+---
+
+## v0.2.0 — 日常办公增强
+
+- 模板保存 / 复用：每个页面顶部模板栏，保存、应用、删除、导入、导出 JSON 模板。
+- 生成前预览 / 校验：先展示将写入的行、目标列与问题清单，有错误时禁止执行。
+- 自动备份 / 安全输出：覆盖已有文件前自动生成 `文件名.bak-时间戳` 备份；
+  写入走临时文件 + 原子替换，失败不残留半成品。
+- PDF / 扫描件支持：图片页可直接选 PDF，逐页渲染后 OCR；
+  文字 / 跨文件页支持带文字层的 PDF。
+- 新增核心模块 `templates`、`validation`、`preview`、`safeio`、`pdf_io`。
+- 新增 UI 模块 `template_bar`、`preview_dialog`。
+- 依赖增加 `PyMuPDF`；单元测试扩充至 65 项。
+
+提交：`8058934`
+
+---
+
+## v0.1.1 — 安全修复
+
+- 修复电子表格公式注入风险。
+- 修复源文件被意外覆盖的问题。
+
+提交：`0da4fc0`
+
+---
+
+## v0.1.0 — 初始版本
+
+- 表格批量填写工具 Windows GUI 首个可发布版本。
+- 三种填表方式：① 图片识别填表、② 文字填表、③ 跨文件填表。
+- 适配 Microsoft Office（Excel / Word / PowerPoint）、WPS Office 与 OnlyOffice。
+- 双层写入引擎：openpyxl 直接读写（默认）+ Windows COM 引擎（可选，自动检测）。
+- OCR 引擎抽象：RapidOCR / Tesseract / Windows OCR；OpenCV 表格线检测与词聚类。
+- 数据读取：xlsx / csv / txt / json / docx / pptx。
+
+提交：`30966b8`

@@ -101,9 +101,27 @@ def validate_output(output: str, source: str) -> ValidationResult:
         except OSError as exc:
             result.error(f"无法创建输出目录：{exc}")
             return result
-        if not os.access(directory, os.W_OK):
-            result.error(f"输出目录不可写：{directory}")
+        # ``os.access`` is unreliable on Windows: Controlled Folder Access and
+        # security software block writes without changing the ACL.  Probe with
+        # a real temp file so the user learns before the OCR run, not after.
+        if not writable_directory(directory):
+            result.error(
+                f"输出目录不可写：{directory}\n"
+                "该目录可能被“受控文件夹访问”或安全软件保护，请换到文档目录或关闭保护后重试。"
+            )
     return result
+
+
+def writable_directory(directory: str) -> bool:
+    """Return True when a new file can be created in *directory*.
+
+    Delegates to :func:`app.core.safeio._write_probe`, which deliberately uses
+    a plain file create (not ``tempfile.mkstemp``): on folders blocked by
+    Controlled Folder Access the latter can hang instead of raising.
+    """
+    from .safeio import _probe_cache
+
+    return _probe_cache(directory)
 
 
 def validate_target_file(path: str) -> ValidationResult:

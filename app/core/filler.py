@@ -262,7 +262,7 @@ def fill_from_images(request: ImageFillRequest,
                 report.warn("预览模式：未保存任何文件。")
             else:
                 output = request.output_path or request.target_path
-                engine.save(output, backup=request.backup)
+                engine.save(output, backup=request.backup, warnings=report.warnings)
                 report.output_path = output
         finally:
             engine.close()
@@ -328,7 +328,7 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
             report.warn("预览模式：未保存任何文件。")
         else:
             output = request.output_path or request.target_path
-            eng.save(output, backup=request.backup)
+            eng.save(output, backup=request.backup, warnings=report.warnings)
             report.output_path = output
     finally:
         eng.close()
@@ -443,7 +443,8 @@ def _apply_docx(path: str, output: str, entries: list[MappingEntry],
             report.add(FillRecord(target=ref.describe(), value=value,
                                   source=entry.source, file=output,
                                   message=f"替换 {count} 处" if count else "未找到占位符"))
-    save_with_backup(output, lambda tmp: document.save(tmp), backup=False)
+    save_with_backup(output, lambda tmp: document.save(tmp), backup=False,
+                     warnings=report.warnings)
 
 
 def _apply_pptx(path: str, output: str, entries: list[MappingEntry],
@@ -480,7 +481,8 @@ def _apply_pptx(path: str, output: str, entries: list[MappingEntry],
             report.add(FillRecord(target=ref.describe(), value=value,
                                   source=entry.source, file=output,
                                   message=f"替换 {replaced} 处" if replaced else "未找到占位符"))
-    save_with_backup(output, lambda tmp: prs.save(tmp), backup=False)
+    save_with_backup(output, lambda tmp: prs.save(tmp), backup=False,
+                     warnings=report.warnings)
 
 
 def _find_table_shape(slide, table_index: int):
@@ -547,7 +549,7 @@ def _apply_xlsx(path: str, output: str, entries: list[MappingEntry],
                                           source=entry.source, file=output))
                 else:
                     raise FillError(f"不支持的目标类型：{ref.kind}")
-        eng.save(output, backup=backup)
+        eng.save(output, backup=backup, warnings=report.warnings)
     finally:
         eng.close()
 

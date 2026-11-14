@@ -208,12 +208,14 @@ class OpenpyxlEngine(SpreadsheetEngine):
             self._wb.close()
             self._wb = None
 
-    def save(self, path: str | None = None, backup: bool = True) -> str:
+    def save(self, path: str | None = None, backup: bool = True,
+             warnings: list[str] | None = None) -> str:
         if self._wb is None:
             raise FillError("工作簿尚未打开。")
         target = os.path.abspath(path or self.path)
         ensure_parent(target)
-        save_with_backup(target, lambda tmp: self._wb.save(tmp), backup=backup)
+        save_with_backup(target, lambda tmp: self._wb.save(tmp),
+                         backup=backup, warnings=warnings)
         self.path = target
         return target
 

@@ -14,10 +14,10 @@
     也可用 -KeyPath 显式指定。
 
 .EXAMPLE
-    pwsh -File installer\sign-release.ps1 -Version 1.2.0 -KeyPath D:\keys\tablefiller.xml
+    pwsh -File installer\sign-release.ps1 -Version 1.2.1 -KeyPath D:\keys\tablefiller.xml
 #>
 param(
-    [string]$Version = '1.2.0',
+    [string]$Version = '1.2.1',
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$OutputDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist'),
     [string]$KeyPath = $env:TABLEFILLER_SIGNING_KEY

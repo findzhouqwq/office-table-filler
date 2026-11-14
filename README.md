@@ -85,10 +85,10 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 
 ```powershell
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.2.0
+pwsh -File installer\sign-release.ps1 -Version 1.2.1
 ```
 
-生成 `dist\app-1.2.0.zip`、`dist\manifest-1.2.0.json`、`dist\manifest-1.2.0.sig` 后，作为 GitHub Release 资产上传；
+生成 `dist\app-1.2.1.zip`、`dist\manifest-1.2.1.json`、`dist\manifest-1.2.1.sig` 后，作为 GitHub Release 资产上传；
 安装程序从 `releases/latest/download/` 获取并校验。资产名带版本号，
 可避免 CDN / 镜像缓存把旧版本的清单或安装包混进新版本。
 
@@ -116,7 +116,7 @@ installer\build-setup.bat
 ```
 
 脚本会自动安装 `ps2exe` 模块并生成 `installer\TableFiller-Setup.exe`
-（无控制台、带图标、版本 1.2.0.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
+（无控制台、带图标、版本 1.2.1.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
 可将 `installer\TableFiller.ico` 与 EXE 放在同一目录。
 
 ## 安装

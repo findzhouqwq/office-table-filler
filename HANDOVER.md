@@ -176,6 +176,20 @@ office-table-filler/
 - **安全输出**：所有写文件走 `safeio.save_with_backup()`——先写临时文件再原子替换，
   覆盖已有文件前生成 `文件名.bak-时间戳`；失败不会留下半成品。
 
+- **受保护目录的写入降级**（重要，容易踩）：
+  部分机器上 Desktop / Documents 被「受控文件夹访问」或安全软件保护，普通写文件
+  会抛 `PermissionError`。处理约定：
+  1. `backup_file()` 依次尝试「显式 backup_dir → 目标目录 → `default_backup_dir()`
+     （AppData，再退回临时目录）」，任一成功即返回；
+  2. `save_with_backup()` 在备份失败时**不抛错**，只把提示追加到 `warnings`，
+     保存继续执行；
+  3. `atomic_write()` 先用 `_probe_cache()` 探测目录可写性，不可写时改在系统临时
+     目录构建文件，再用 `shutil.copyfileobj` 覆盖目标；
+  4. `_write_probe()` **必须用内建 `open()`**，不要用 `tempfile.mkstemp()`——
+     在被拦截的目录上 `mkstemp` 会无限挂起而不是抛异常（实测）；
+  5. `validation.validate_output()` 复用同一个探测，在流程开始前就把不可写目录
+     报成错误，避免用户跑完 OCR 才失败。
+
 - **模板存储**：默认在用户配置目录（Windows `%APPDATA%\TableFiller\templates`），
   可用环境变量 `TABLE_FILLER_HOME` 覆盖，便于测试或多套配置隔离。
 
@@ -205,6 +219,7 @@ office-table-filler/
 | 安装向导下载失败 | 安装程序已内置镜像回退（ghfast → gh-proxy → GitHub）；全部失败时检查网络/代理后重试。 |
 | 任务栏未自动固定 | Windows 10/11 限制较多；从开始菜单右键程序选择“固定到任务栏”即可。 |
 | 安装后启动无反应 | 查看安装目录下 `.venv\Scripts\python.exe` 是否存在；必要时删除安装目录重新安装。 |
+| 报错「无法创建备份文件：Permission denied」/「输出目录不可写」 | 目标在 Desktop、Documents 等受保护目录，被「受控文件夹访问」或安全软件拦截。把文件移到普通目录（如 `D:\表格`），或在 Windows 安全中心关闭「受控文件夹访问」后重试。备份已能自动兜底到 AppData/临时目录，仍报错说明连目标文件本身都无法覆盖。 |
 
 ## 5. 已知限制
 
@@ -250,14 +265,14 @@ git push origin main
 
 ```powershell
 # 1. 提交要发布的代码（发布包来自 HEAD）
-git add . && git commit -m "release: v1.2.0" && git push origin main
+git add . && git commit -m "release: v1.2.1" && git push origin main
 
-# 2. 用私钥生成 app-1.2.0.zip + manifest-1.2.0.json + manifest-1.2.0.sig
+# 2. 用私钥生成 app-1.2.1.zip + manifest-1.2.1.json + manifest-1.2.1.sig
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.2.0
+pwsh -File installer\sign-release.ps1 -Version 1.2.1
 
 # 3. 上传为 Release 资产（安装程序使用 releases/latest/download）
-gh release create v1.2.0 dist\app-1.2.0.zip dist\manifest-1.2.0.json dist\manifest-1.2.0.sig --title "v1.2.0" --notes "发布说明"
+gh release create v1.2.1 dist\app-1.2.1.zip dist\manifest-1.2.1.json dist\manifest-1.2.1.sig --title "v1.2.1" --notes "发布说明"
 ```
 
 资产名带版本号，避免 CDN / 镜像缓存把旧清单混进新版本；安装程序按自身版本号取对应文件。

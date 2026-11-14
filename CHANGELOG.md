@@ -8,6 +8,15 @@
 
 ---
 
+## v1.1.1 — 安装脚本编码修复
+
+- `build-setup.bat` / `sign-setup.bat` 开头补 `chcp 65001`，批处理窗口不再输出中文乱码。
+- `sign-release.ps1` 补写 UTF-8 BOM，修正 Windows PowerShell 5.1 读取中文注释时的编码识别。
+
+提交：`1282ffe`
+
+---
+
 ## v1.1.0 — 安装器安全与完整性增强
 
 - 发布清单验签：安装器内置 RSA 公钥，只接受对应私钥签名的 `manifest.json`，

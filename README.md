@@ -24,6 +24,14 @@
 macOS：`~/Library/Application Support/TableFiller/templates`，
 Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_HOME` 覆盖。
 
+## 界面与主题
+
+- 统一主题层 `app/ui/theme.py`：集中管理配色与 Qt 样式表，主色靛蓝、浅灰背景、白色圆角卡片。
+- 三个功能页均为「卡片 + 标签页」布局：配置项收进卡片，预览 / 规则 / 映射用标签页切换，
+  表格获得更多纵向空间；主操作按钮统一为靛蓝实心主按钮。
+- 执行报告为可折叠卡片，默认收起，运行结束自动展开。
+- 应用图标在运行时绘制，无需外部图片资源；窗口默认 1360×800，适配 1366×768 及以上屏幕。
+
 ## 对 Office 套件的适配
 
 工具的写入引擎有两层：
@@ -77,10 +85,10 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 
 ```powershell
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.1.0
+pwsh -File installer\sign-release.ps1 -Version 1.2.0
 ```
 
-生成 `dist\app-1.1.0.zip`、`dist\manifest-1.1.0.json`、`dist\manifest-1.1.0.sig` 后，作为 GitHub Release 资产上传；
+生成 `dist\app-1.2.0.zip`、`dist\manifest-1.2.0.json`、`dist\manifest-1.2.0.sig` 后，作为 GitHub Release 资产上传；
 安装程序从 `releases/latest/download/` 获取并校验。资产名带版本号，
 可避免 CDN / 镜像缓存把旧版本的清单或安装包混进新版本。
 
@@ -108,7 +116,7 @@ installer\build-setup.bat
 ```
 
 脚本会自动安装 `ps2exe` 模块并生成 `installer\TableFiller-Setup.exe`
-（无控制台、带图标、版本 1.1.0.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
+（无控制台、带图标、版本 1.2.0.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
 可将 `installer\TableFiller.ico` 与 EXE 放在同一目录。
 
 ## 安装
@@ -202,6 +210,7 @@ office-table-filler/
 │   │   └── utils.py         文本 / 数字 / 日期工具
 │   └── ui/
 │       ├── main_window.py
+│       ├── theme.py         主题：配色 / 样式表 / 卡片组件
 │       ├── image_tab.py     图片识别填表
 │       ├── text_tab.py      文字填表
 │       ├── cross_tab.py     跨文件填表

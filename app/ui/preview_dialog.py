@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox,
                                QTextEdit, QVBoxLayout, QWidget)
 
 from ..core.preview import PreviewResult
+from .theme import Card, set_role
 
 
 class PreviewDialog(QDialog):
@@ -21,25 +22,32 @@ class PreviewDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(12)
 
+        head = Card("执行预览")
         summary = QLabel(self.result.summary or "执行预览")
         summary.setWordWrap(True)
-        layout.addWidget(summary)
-
+        head.body.addWidget(summary)
         if self.result.details:
             details = QLabel("\n".join(self.result.details))
             details.setWordWrap(True)
-            layout.addWidget(details)
+            details.setObjectName("StatusText")
+            head.body.addWidget(details)
+        layout.addWidget(head)
 
         issues = QTextEdit()
         issues.setReadOnly(True)
-        issues.setMaximumHeight(130)
+        issues.setMaximumHeight(140)
         issues.setHtml(self._issues_html())
         layout.addWidget(issues)
 
         table = QTableWidget(0, 0)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
         if self.result.headers:
             table.setColumnCount(len(self.result.headers))
             table.setHorizontalHeaderLabels(self.result.headers)
@@ -53,7 +61,8 @@ class PreviewDialog(QDialog):
 
         buttons = QDialogButtonBox()
         self.run_button = buttons.addButton("开始执行", QDialogButtonBox.AcceptRole)
-        buttons.addButton("取消", QDialogButtonBox.RejectRole)
+        set_role(self.run_button, "primary")
+        cancel = buttons.addButton("取消", QDialogButtonBox.RejectRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

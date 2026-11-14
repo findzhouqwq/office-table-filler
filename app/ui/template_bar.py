@@ -25,16 +25,28 @@ class TemplateBar(QWidget):
     def __init__(self, kind: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.kind = kind
+        self.setObjectName("TemplateBar")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("模板"))
+        layout.setContentsMargins(14, 6, 14, 6)
+        layout.setSpacing(8)
+
+        title = QLabel("模板")
+        title.setObjectName("CardTitle")
+        layout.addWidget(title)
+
         self.combo = QComboBox()
-        self.combo.setMinimumWidth(200)
+        self.combo.setMinimumWidth(220)
         layout.addWidget(self.combo, 1)
 
         layout.addWidget(QPushButton("保存…", self, clicked=self._save))
-        layout.addWidget(QPushButton("应用", self, clicked=self._load))
-        layout.addWidget(QPushButton("删除", self, clicked=self._delete))
+        apply_btn = QPushButton("应用", self)
+        apply_btn.setProperty("role", "ghost")
+        apply_btn.clicked.connect(self._load)
+        layout.addWidget(apply_btn)
+        delete_btn = QPushButton("删除", self)
+        delete_btn.setProperty("role", "danger")
+        delete_btn.clicked.connect(self._delete)
+        layout.addWidget(delete_btn)
         layout.addWidget(QPushButton("导入…", self, clicked=self._import))
         layout.addWidget(QPushButton("导出…", self, clicked=self._export))
 

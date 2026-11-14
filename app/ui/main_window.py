@@ -1,10 +1,11 @@
-"""Main window: the three feature tabs plus a status bar."""
+"""Main window: a modern header, the three feature tabs and a status bar."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import (QLabel, QMainWindow, QMessageBox, QTabWidget,
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow,
+                               QMessageBox, QSizePolicy, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from .. import __version__
@@ -12,13 +13,16 @@ from .common import app_settings, confirm
 from .cross_tab import CrossTab
 from .image_tab import ImageTab
 from .text_tab import TextTab
+from .theme import ACCENT, make_app_icon, ghost_button
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"表格批量填写工具 v{__version__}")
-        self.resize(1180, 780)
+        self.setWindowIcon(make_app_icon())
+        self.resize(1360, 800)
+        self.setMinimumSize(1100, 680)
         self._build()
         self._restore_state()
 
@@ -32,17 +36,68 @@ class MainWindow(QMainWindow):
 
     def _build(self) -> None:
         central = QWidget()
+        central.setObjectName("AppRoot")
         root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        root.addWidget(self._build_header())
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(22, 14, 22, 12)
+        content_layout.setSpacing(10)
+
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.tabs.addTab(ImageTab(), "① 图片识别填表")
         self.tabs.addTab(TextTab(), "② 文字填表")
         self.tabs.addTab(CrossTab(), "③ 跨文件填表")
-        root.addWidget(self.tabs, 1)
+        content_layout.addWidget(self.tabs, 1)
+        root.addWidget(content, 1)
+
         self.setCentralWidget(central)
-        self.statusBar().showMessage("就绪。")
+
+        status = self.statusBar()
+        status.showMessage("就绪。")
+        status.setSizeGripEnabled(False)
 
         self._build_menu()
-        self._build_toolbar()
+
+    def _build_header(self) -> QWidget:
+        header = QFrame()
+        header.setObjectName("Header")
+        header.setFixedHeight(68)
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(22, 12, 22, 12)
+        layout.setSpacing(12)
+
+        logo = QLabel()
+        logo.setPixmap(make_app_icon(72).pixmap(38, 38))
+        logo.setFixedSize(38, 38)
+        layout.addWidget(logo)
+
+        titles = QVBoxLayout()
+        titles.setContentsMargins(0, 0, 0, 0)
+        titles.setSpacing(1)
+        title = QLabel("表格批量填写工具")
+        title.setObjectName("AppTitle")
+        subtitle = QLabel("Office · WPS · OnlyOffice 批量填表")
+        subtitle.setObjectName("AppSubtitle")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+        layout.addLayout(titles)
+
+        layout.addStretch(1)
+
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("Pill")
+        layout.addWidget(version)
+
+        open_button = ghost_button("打开目标表格")
+        open_button.clicked.connect(self._open_target)
+        layout.addWidget(open_button)
+        return header
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("文件(&F)")
@@ -57,16 +112,6 @@ class MainWindow(QMainWindow):
         about_action = QAction("关于", self)
         about_action.triggered.connect(self._about)
         help_menu.addAction(about_action)
-
-    def _build_toolbar(self) -> None:
-        from PySide6.QtWidgets import QToolBar
-        toolbar = QToolBar("主工具栏")
-        toolbar.setObjectName("mainToolbar")
-        toolbar.setMovable(False)
-        open_action = QAction("打开目标表格", self)
-        open_action.triggered.connect(self._open_target)
-        toolbar.addAction(open_action)
-        self.addToolBar(toolbar)
 
     def _open_target(self) -> None:
         tab = self.tabs.currentWidget()

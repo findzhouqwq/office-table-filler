@@ -8,7 +8,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-Module -Li
 if errorlevel 1 goto :err
 
 echo [build] 编译无控制台安装程序 ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-ps2exe -inputFile '%~dp0TableFillerSetup.ps1' -outputFile '%~dp0TableFiller-Setup.exe' -noConsole -sta -iconFile '%~dp0TableFiller.ico' -title '表格批量填写工具 安装程序' -product '表格批量填写工具' -company 'findzhouqwq' -version '1.1.0.0'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-ps2exe -inputFile '%~dp0TableFillerSetup.ps1' -outputFile '%~dp0TableFiller-Setup.exe' -noConsole -sta -iconFile '%~dp0TableFiller.ico' -title '表格批量填写工具 安装程序' -product '表格批量填写工具' -company 'findzhouqwq' -version '1.2.0.0'"
 if errorlevel 1 goto :err
 
 if not "%SIGN_PFX%"=="" goto :sign

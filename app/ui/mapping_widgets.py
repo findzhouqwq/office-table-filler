@@ -12,6 +12,20 @@ from ..core.models import ExtractionRule, FieldMapping
 class _BaseTable(QTableWidget):
     changed = Signal()
 
+    def __init__(self, rows: int = 0, cols: int = 0,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(rows, cols, parent)
+        self.setAlternatingRowColors(True)
+        self.setShowGrid(False)
+        self.setWordWrap(False)
+        self.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.verticalHeader().setDefaultSectionSize(34)
+        self.verticalHeader().setVisible(False)
+        self.horizontalHeader().setHighlightSections(False)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+
     def _emit(self) -> None:
         self.changed.emit()
 

@@ -124,7 +124,8 @@ office-table-filler/
 │   │   ├── errors.py       用户可见异常
 │   │   └── utils.py        文本/数字/日期工具
 │   └── ui/                 PySide6 界面
-│       ├── main_window.py
+│       ├── main_window.py  主窗口（品牌栏 + 标签页 + 状态栏）
+│       ├── theme.py        主题：配色 / 样式表 / 卡片与可折叠组件
 │       ├── image_tab.py    图片识别填表
 │       ├── text_tab.py     文字填表
 │       ├── cross_tab.py    跨文件填表
@@ -177,6 +178,20 @@ office-table-filler/
 
 - **模板存储**：默认在用户配置目录（Windows `%APPDATA%\TableFiller\templates`），
   可用环境变量 `TABLE_FILLER_HOME` 覆盖，便于测试或多套配置隔离。
+
+### 3.3 界面与主题
+
+- 所有视觉样式集中在 `app/ui/theme.py`：调色板常量、`build_stylesheet()`、`apply_theme(app)`。
+  `main.py` 创建 `QApplication` 后立即调用 `apply_theme`，不要在页面里散写 `setStyleSheet`。
+- 复用组件：
+  - `Card`：白色圆角卡片，`Card(title, hint)`，内容加到 `.body`；
+  - `CollapsibleCard`：可折叠卡片（执行报告用），`set_expanded(True/False)`；
+  - `primary_button` / `ghost_button` / `danger_button`：按钮角色，靠动态属性 `role` 选择样式。
+- 布局约定：功能页使用「配置卡片 + 标签页」结构，把预览 / 规则 / 映射放进 `QTabWidget`
+  （对象名 `DetailTabs`，有独立 QSS），避免多张卡片在纵向被压扁。
+- 主操作按钮统一用 `primary_button`；删除类操作用 `danger_button`，次要链接用 `ghost_button`。
+- 应用图标由 `make_app_icon()` 运行时绘制，不依赖图片资源，打包时无需额外传入图标文件。
+- 新增控件时优先复用上述组件与 QSS 选择器，避免出现与主题不一致的原生控件。
 
 ## 4. 常见问题
 
@@ -235,14 +250,14 @@ git push origin main
 
 ```powershell
 # 1. 提交要发布的代码（发布包来自 HEAD）
-git add . && git commit -m "release: v1.1.0" && git push origin main
+git add . && git commit -m "release: v1.2.0" && git push origin main
 
-# 2. 用私钥生成 app-1.1.0.zip + manifest-1.1.0.json + manifest-1.1.0.sig
+# 2. 用私钥生成 app-1.2.0.zip + manifest-1.2.0.json + manifest-1.2.0.sig
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.1.0
+pwsh -File installer\sign-release.ps1 -Version 1.2.0
 
 # 3. 上传为 Release 资产（安装程序使用 releases/latest/download）
-gh release create v1.1.0 dist\app-1.1.0.zip dist\manifest-1.1.0.json dist\manifest-1.1.0.sig --title "v1.1.0" --notes "发布说明"
+gh release create v1.2.0 dist\app-1.2.0.zip dist\manifest-1.2.0.json dist\manifest-1.2.0.sig --title "v1.2.0" --notes "发布说明"
 ```
 
 资产名带版本号，避免 CDN / 镜像缓存把旧清单混进新版本；安装程序按自身版本号取对应文件。

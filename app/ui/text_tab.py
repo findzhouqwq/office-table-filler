@@ -6,8 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QGroupBox, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QPushButton, QSpinBox,
-                               QSplitter, QTableWidget, QTableWidgetItem,
-                               QTextEdit, QVBoxLayout, QWidget)
+                               QSplitter, QTabWidget, QTableWidget,
+                               QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
 from ..core import templates
 from ..core.data_io import load_table
@@ -21,6 +21,8 @@ from .common import pick_files, save_file, show_error, Worker, format_report
 from .mapping_widgets import PlanTable
 from .preview_dialog import show_preview
 from .template_bar import TemplateBar
+from .theme import (Card, CollapsibleCard, ghost_button, hint_label,
+                    primary_button)
 
 SOURCE_EXTS = ["数据 / PDF 文件 (*.csv *.txt *.tsv *.json *.xlsx *.xlsm *.pdf)",
                "所有文件 (*.*)"]
@@ -37,6 +39,8 @@ class TextTab(QWidget):
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(12)
 
         self.template_bar = TemplateBar("text")
         self.template_bar.save_requested.connect(self._save_template)
@@ -44,11 +48,12 @@ class TextTab(QWidget):
         root.addWidget(self.template_bar)
 
         # ---- target ----
-        target = QGroupBox("目标表格")
-        tgrid = QVBoxLayout(target)
+        target = Card("目标表格", "选择要写入的 Excel 文件")
+        tgrid = target.body
         row1 = QHBoxLayout()
         self.target_edit = QLineEdit()
         self.target_edit.setReadOnly(True)
+        self.target_edit.setPlaceholderText("尚未选择目标表格")
         row1.addWidget(self.target_edit, 1)
         row1.addWidget(QPushButton("选择…", self, clicked=lambda: self._pick_target()))
         tgrid.addLayout(row1)
@@ -65,6 +70,7 @@ class TextTab(QWidget):
         row3 = QHBoxLayout()
         row3.addWidget(QLabel("输出文件"))
         self.output_edit = QLineEdit()
+        self.output_edit.setPlaceholderText("默认覆盖目标表格（自动备份）")
         row3.addWidget(self.output_edit, 1)
         row3.addWidget(QPushButton("另存为…", self, clicked=lambda: self._pick_output()))
         tgrid.addLayout(row3)
@@ -79,64 +85,105 @@ class TextTab(QWidget):
         root.addWidget(target)
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
-        # ---- left: source ----
+        # ---- left: source (files / preview / pasted text) ----
         left = QWidget()
         lgrid = QVBoxLayout(left)
-        lgrid.addWidget(QLabel("来源文件"))
+        lgrid.setContentsMargins(0, 0, 0, 0)
+        lgrid.setSpacing(0)
+
+        source_card = Card("来源数据", "CSV / TXT / JSON / XLSX / PDF")
+        self.source_tabs = QTabWidget()
+        self.source_tabs.setObjectName("DetailTabs")
+        self.source_tabs.setDocumentMode(True)
+
+        files_page = QWidget()
+        fgrid = QVBoxLayout(files_page)
+        fgrid.setContentsMargins(0, 6, 0, 0)
         self.source_list = QListWidget()
-        lgrid.addWidget(self.source_list, 1)
+        self.source_list.setAlternatingRowColors(True)
+        fgrid.addWidget(self.source_list, 1)
         lbtns = QHBoxLayout()
         lbtns.addWidget(QPushButton("添加文件…", self, clicked=lambda: self._add_sources()))
         lbtns.addWidget(QPushButton("移除", self, clicked=lambda: self._remove_source()))
         lbtns.addWidget(QPushButton("清空", self, clicked=lambda: self.source_list.clear()))
-        lgrid.addLayout(lbtns)
-        lgrid.addWidget(QLabel("数据预览"))
+        lbtns.addStretch(1)
+        fgrid.addLayout(lbtns)
+        self.source_tabs.addTab(files_page, "来源文件")
+
+        preview_page = QWidget()
+        vgrid = QVBoxLayout(preview_page)
+        vgrid.setContentsMargins(0, 6, 0, 0)
         self.preview_table = QTableWidget(0, 0)
-        lgrid.addWidget(self.preview_table, 1)
-        lgrid.addWidget(QLabel("或直接粘贴文本（每段一条记录，可用空行分隔）"))
+        self.preview_table.setAlternatingRowColors(True)
+        vgrid.addWidget(self.preview_table, 1)
+        self.source_tabs.addTab(preview_page, "数据预览")
+
+        text_page = QWidget()
+        xgrid = QVBoxLayout(text_page)
+        xgrid.setContentsMargins(0, 6, 0, 0)
         self.text_edit = QTextEdit()
-        lgrid.addWidget(self.text_edit, 1)
+        self.text_edit.setPlaceholderText("姓名：张三\n工号：E001\n\n姓名：李四\n工号：E002")
+        xgrid.addWidget(self.text_edit, 1)
+        self.source_tabs.addTab(text_page, "粘贴文本")
+
+        source_card.body.addWidget(self.source_tabs, 1)
+        lgrid.addWidget(source_card, 1)
         splitter.addWidget(left)
 
         # ---- right: mapping ----
         right = QWidget()
         rgrid = QVBoxLayout(right)
-        rgrid.addWidget(QLabel("目标列映射（目标列 ↔ 源字段）"))
+        rgrid.setContentsMargins(0, 0, 0, 0)
+        rgrid.setSpacing(0)
+
+        plan_card = Card("目标列映射", "目标列 ↔ 源字段")
         self.plan_table = PlanTable()
-        rgrid.addWidget(self.plan_table, 1)
+        plan_card.body.addWidget(self.plan_table, 1)
         pbtns = QHBoxLayout()
         pbtns.addWidget(QPushButton("添加映射", self, clicked=lambda: self.plan_table.add_row()))
         pbtns.addWidget(QPushButton("删除映射", self, clicked=lambda: self.plan_table.remove_row(
             self.plan_table.currentRow())))
         pbtns.addStretch(1)
-        rgrid.addLayout(pbtns)
-        rgrid.addWidget(QLabel("目标表头（用于自动匹配）"))
+        auto_btn = ghost_button("按同名表头自动生成")
+        auto_btn.clicked.connect(self._auto_map)
+        pbtns.addWidget(auto_btn)
+        plan_card.body.addLayout(pbtns)
+
+        hdr_row = QHBoxLayout()
+        hdr_row.addWidget(QLabel("目标表头"))
         self.target_header_edit = QTextEdit()
-        self.target_header_edit.setMaximumHeight(70)
-        rgrid.addWidget(self.target_header_edit)
-        rgrid.addWidget(QPushButton("按同名表头自动生成映射", self,
-                                    clicked=lambda: self._auto_map()))
+        self.target_header_edit.setMaximumHeight(56)
+        self.target_header_edit.setPlaceholderText("读取目标表格后自动填入，用、分隔")
+        hdr_row.addWidget(self.target_header_edit, 1)
+        plan_card.body.addLayout(hdr_row)
+
+        rgrid.addWidget(plan_card, 1)
         splitter.addWidget(right)
-        splitter.setSizes([460, 380])
-        root.addWidget(splitter, 1)
+        splitter.setSizes([560, 460])
+        root.addWidget(splitter, 3)
 
         run = QHBoxLayout()
+        run.setSpacing(10)
         self.validate_btn = QPushButton("预览 / 校验")
         self.validate_btn.clicked.connect(self._preview_run)
         run.addWidget(self.validate_btn)
-        self.run_btn = QPushButton("开始填表")
-        self.run_btn.setStyleSheet("font-weight: bold; padding: 6px;")
+        self.run_btn = primary_button("开始填表")
         self.run_btn.clicked.connect(self._run)
         run.addWidget(self.run_btn)
         run.addStretch(1)
-        root.addLayout(run)
         self.status_label = QLabel("就绪。")
-        root.addWidget(self.status_label)
+        self.status_label.setObjectName("StatusText")
+        run.addWidget(self.status_label)
+        root.addLayout(run)
+
+        self.report_card = CollapsibleCard("执行报告", expanded=False)
         self.report_edit = QTextEdit()
         self.report_edit.setReadOnly(True)
-        root.addWidget(QLabel("执行报告"))
-        root.addWidget(self.report_edit, 1)
+        self.report_edit.setMinimumHeight(90)
+        self.report_card.body.addWidget(self.report_edit)
+        root.addWidget(self.report_card)
 
     # -- helpers ------------------------------------------------------------
     def _pick_target(self) -> None:
@@ -283,6 +330,7 @@ class TextTab(QWidget):
     def _on_done(self, report) -> None:
         self.status_label.setText(f"完成：写入 {report.written} 处。")
         self.report_edit.setPlainText(format_report(report))
+        self.report_card.set_expanded(True)
 
     def _on_fail(self, message: str) -> None:
         self.status_label.setText("失败。")

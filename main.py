@@ -79,6 +79,9 @@ def main() -> int:
     app.setApplicationName("表格批量填写工具")
     app.setFont(QFont("Microsoft YaHei UI", 10))
 
+    from app.ui.theme import apply_theme
+    apply_theme(app)
+
     from app.ui.main_window import MainWindow
     window = MainWindow()
     window.show()

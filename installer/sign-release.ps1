@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     生成带 RSA 签名的发布清单（app.zip + manifest.json + manifest.sig）。

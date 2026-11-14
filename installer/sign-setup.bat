@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 rem 用 signtool 对安装程序 / PyInstaller 产物做代码签名。
 rem 需要安装 Windows SDK（含 signtool.exe），并具备代码签名证书。

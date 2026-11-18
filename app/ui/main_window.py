@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QSizePolicy, QTabWidget,
                                QVBoxLayout, QWidget)
@@ -12,6 +12,7 @@ from .. import __version__
 from .common import app_settings, confirm
 from .cross_tab import CrossTab
 from .image_tab import ImageTab
+from .side_panel import SidePanel
 from .text_tab import TextTab
 from .theme import ACCENT, make_app_icon, ghost_button
 
@@ -19,6 +20,7 @@ from .theme import ACCENT, make_app_icon, ghost_button
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.side_panel: SidePanel | None = None
         self.setWindowTitle(f"表格批量填写工具 v{__version__}")
         self.setWindowIcon(make_app_icon())
         self.resize(1360, 800)
@@ -94,6 +96,11 @@ class MainWindow(QMainWindow):
         version.setObjectName("Pill")
         layout.addWidget(version)
 
+        side_button = ghost_button("填表助手")
+        side_button.setToolTip("打开贴在屏幕右侧的填表助手（Ctrl+Shift+A）")
+        side_button.clicked.connect(self._toggle_side_panel)
+        layout.addWidget(side_button)
+
         open_button = ghost_button("打开目标表格")
         open_button.clicked.connect(self._open_target)
         layout.addWidget(open_button)
@@ -108,6 +115,14 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        tools_menu = self.menuBar().addMenu("工具(&T)")
+        self._side_action = QAction("侧边填表助手", self)
+        self._side_action.setCheckable(True)
+        self._side_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        self._side_action.setToolTip("在屏幕右缘打开 / 关闭填表助手")
+        self._side_action.triggered.connect(self._toggle_side_panel)
+        tools_menu.addAction(self._side_action)
+
         help_menu = self.menuBar().addMenu("帮助(&H)")
         about_action = QAction("关于", self)
         about_action.triggered.connect(self._about)
@@ -119,6 +134,84 @@ class MainWindow(QMainWindow):
             tab._pick_target()
         elif isinstance(tab, TextTab):
             tab._pick_target()
+
+    # -- side panel --------------------------------------------------------
+    def _ensure_side_panel(self) -> SidePanel:
+        if self.side_panel is None:
+            self.side_panel = SidePanel(self)
+            self.side_panel.headers_provider = self._current_target_headers
+            self.side_panel.target_provider = self._current_target_info
+            self.side_panel.closed.connect(self._on_side_panel_closed)
+        return self.side_panel
+
+    def _toggle_side_panel(self, checked: bool = False) -> None:
+        panel = self._ensure_side_panel()
+        if panel.isVisible():
+            panel.hide_panel()
+        else:
+            panel.show_panel()
+        self._side_action.setChecked(panel.isVisible())
+
+    def _on_side_panel_closed(self) -> None:
+        if hasattr(self, "_side_action"):
+            self._side_action.setChecked(False)
+
+    def _current_target_info(self) -> dict | None:
+        """Return the target workbook selected in the current tab, if any."""
+        tab = self.tabs.currentWidget()
+        path_box = getattr(tab, "target_edit", None)
+        path = path_box.text().strip() if path_box is not None else ""
+        if not path:
+            return None
+        spin = getattr(tab, "header_spin", None)
+        combo = getattr(tab, "sheet_combo", None)
+        out_box = getattr(tab, "output_edit", None)
+        return {
+            "path": path,
+            "sheet": combo.currentText() if combo is not None else "",
+            "header_row": max(1, spin.value()) if spin is not None else 1,
+            "output_path": out_box.text().strip() if out_box is not None else "",
+        }
+
+    def _current_target_headers(self) -> list[str]:
+        """Return the headers of the target table for the side panel."""
+        tab = self.tabs.currentWidget()
+        text_widget = getattr(tab, "target_header_edit", None)
+        if text_widget is not None:
+            raw = text_widget.toPlainText().strip()
+            if raw:
+                return [part.strip() for part in raw.split("、") if part.strip()]
+
+        info = self._current_target_info()
+        if info is None:
+            return []
+        path = info["path"]
+        header_row = info["header_row"]
+        try:
+            from openpyxl.utils import get_column_letter
+
+            from ..core.spreadsheet import OpenpyxlEngine
+            from ..core.utils import clean_text
+
+            engine = OpenpyxlEngine()
+            engine.open(path)
+            try:
+                sheets = engine.sheets()
+                if not sheets:
+                    return []
+                sheet = engine.sheet_name(info["sheet"])
+                _, max_col = engine.dims(sheet)
+                headers: list[str] = []
+                for col in range(1, max_col + 1):
+                    value = clean_text(engine.cell_value(
+                        sheet, f"{get_column_letter(col)}{header_row}"))
+                    if value:
+                        headers.append(value)
+                return headers
+            finally:
+                engine.close()
+        except Exception:  # noqa: BLE001 - fall back to manual field entry
+            return []
 
     def _about(self) -> None:
         QMessageBox.about(
@@ -149,6 +242,8 @@ class MainWindow(QMainWindow):
             closer = getattr(widget, "on_before_close", None)
             if callable(closer):
                 closer()
+        if self.side_panel is not None:
+            self.side_panel.hide_panel()
         app_settings().setValue("window/geometry", self.saveGeometry())
         app_settings().setValue("window/state", self.saveState())
         event.accept()

@@ -265,14 +265,14 @@ git push origin main
 
 ```powershell
 # 1. 提交要发布的代码（发布包来自 HEAD）
-git add . && git commit -m "release: v1.2.1" && git push origin main
+git add . && git commit -m "release: v1.3.0" && git push origin main
 
-# 2. 用私钥生成 app-1.2.1.zip + manifest-1.2.1.json + manifest-1.2.1.sig
+# 2. 用私钥生成 app-1.3.0.zip + manifest-1.3.0.json + manifest-1.3.0.sig
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.2.1
+pwsh -File installer\sign-release.ps1 -Version 1.3.0
 
 # 3. 上传为 Release 资产（安装程序使用 releases/latest/download）
-gh release create v1.2.1 dist\app-1.2.1.zip dist\manifest-1.2.1.json dist\manifest-1.2.1.sig --title "v1.2.1" --notes "发布说明"
+gh release create v1.3.0 dist\app-1.3.0.zip dist\manifest-1.3.0.json dist\manifest-1.3.0.sig --title "v1.3.0" --notes "发布说明"
 ```
 
 资产名带版本号，避免 CDN / 镜像缓存把旧清单混进新版本；安装程序按自身版本号取对应文件。

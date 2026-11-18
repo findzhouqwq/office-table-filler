@@ -19,10 +19,36 @@
 | 生成前预览 / 校验 | “预览 / 校验”按钮先展示将要写入的行、目标列和问题清单；有错误时禁止执行 |
 | 自动备份 / 安全输出 | 覆盖已有文件前自动生成 `文件名.bak-时间戳` 备份；写入走临时文件 + 原子替换，失败不会留下半成品 |
 | PDF / 扫描件 | 图片页可直接选择 PDF，自动按页渲染后 OCR；文字 / 跨文件页支持有文字层的 PDF |
+| 侧边填表助手 | 贴在屏幕右缘的常驻面板：剪贴板一键识别分类、直接追加到目标表格、字段速填 / 单项 / 整行复制、读取表头，可收起为窄条 |
 
 模板默认保存在用户配置目录（Windows：`%APPDATA%\TableFiller\templates`，
 macOS：`~/Library/Application Support/TableFiller/templates`，
 Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_HOME` 覆盖。
+
+## 侧边填表助手（贴屏幕右侧，可收起）
+
+除了批量填表，工具还提供一个辅助**手工填表**的侧边面板：它贴着当前屏幕的右边缘，
+默认置顶在 Excel / WPS 窗口旁边，随时取用。
+
+- **打开方式**：主界面右上角「填表助手」按钮，或菜单「工具 → 侧边填表助手」，
+  快捷键 `Ctrl+Shift+A`。
+- **始终贴边**：面板贴着屏幕右侧显示，拖动渐变标题栏可上下调整位置；「已置顶」
+  可切换是否总在最前。
+- **字段速填**：按「字段名 + 值」维护常用字段，每个字段可单独点「复制」粘贴；
+  在字段值输入框按回车也可复制。
+- **整行复制**：点「复制整行（Tab 分隔）」把全部非空值写入剪贴板，在 Excel / WPS
+  中粘贴即可按列填入一行。
+- **读取表头**：点「读取表头」自动从主界面当前目标表格读取表头生成字段，
+  同名字段已填的值会保留。
+- **一键识别剪贴板**：复制一段文字后点「⚡ 一键识别剪贴板」，自动识别并分类
+  姓名、手机、座机、身份证、邮箱、地址、公司、部门、职位、日期、金额、银行卡、
+  统一社会信用代码等 30 余类字段；优先解析 `字段：值` 形式，也支持无标签纯值，
+  识别结果会自动对齐主界面目标表格的表头。
+- **直接填入表格**：点「直接填入目标表格」，把当前字段作为新行追加到主界面选中的
+  表格末尾；按真实表头匹配列（例如「手机」写入「联系电话」列），写入前确认并自动备份。
+- **收起 / 展开**：点标题栏「›」或按 `Esc` 收起为屏幕右缘的渐变窄条，
+  点击窄条即可展开；点「✕」关闭面板，可从主界面再次打开。
+- 字段内容、置顶状态与面板垂直位置自动保存，下次打开自动恢复。
 
 ## 界面与主题
 
@@ -30,6 +56,8 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 - 三个功能页均为「卡片 + 标签页」布局：配置项收进卡片，预览 / 规则 / 映射用标签页切换，
   表格获得更多纵向空间；主操作按钮统一为靛蓝实心主按钮。
 - 执行报告为可折叠卡片，默认收起，运行结束自动展开。
+- 侧边填表助手为无边框圆角面板：渐变标题栏、柔和投影、可收起为渐变窄条，
+  字段列表与使用提示分区展示。
 - 应用图标在运行时绘制，无需外部图片资源；窗口默认 1360×800，适配 1366×768 及以上屏幕。
 
 ## 对 Office 套件的适配
@@ -85,10 +113,10 @@ Linux：`~/.config/TableFiller/templates`），可用环境变量 `TABLE_FILLER_
 
 ```powershell
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.2.1
+pwsh -File installer\sign-release.ps1 -Version 1.3.0
 ```
 
-生成 `dist\app-1.2.1.zip`、`dist\manifest-1.2.1.json`、`dist\manifest-1.2.1.sig` 后，作为 GitHub Release 资产上传；
+生成 `dist\app-1.3.0.zip`、`dist\manifest-1.3.0.json`、`dist\manifest-1.3.0.sig` 后，作为 GitHub Release 资产上传；
 安装程序从 `releases/latest/download/` 获取并校验。资产名带版本号，
 可避免 CDN / 镜像缓存把旧版本的清单或安装包混进新版本。
 
@@ -116,7 +144,7 @@ installer\build-setup.bat
 ```
 
 脚本会自动安装 `ps2exe` 模块并生成 `installer\TableFiller-Setup.exe`
-（无控制台、带图标、版本 1.2.1.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
+（无控制台、带图标、版本 1.3.0.0）。分发该 EXE 即可；若希望窗口标题也显示图标，
 可将 `installer\TableFiller.ico` 与 EXE 放在同一目录。
 
 ## 安装
@@ -205,6 +233,7 @@ office-table-filler/
 │   │   ├── preview.py       执行前预览
 │   │   ├── templates.py     模板保存 / 复用
 │   │   ├── safeio.py        原子写入与自动备份
+│   │   ├── field_detect.py  剪贴板字段识别 / 表头对齐 / 追加行
 │   │   ├── pdf_io.py        PDF 文本提取与逐页渲染
 │   │   ├── models.py        数据结构
 │   │   └── utils.py         文本 / 数字 / 日期工具
@@ -214,6 +243,7 @@ office-table-filler/
 │       ├── image_tab.py     图片识别填表
 │       ├── text_tab.py      文字填表
 │       ├── cross_tab.py     跨文件填表
+│       ├── side_panel.py    侧边填表助手（贴屏幕右缘、可收起）
 │       ├── template_bar.py  模板工具栏
 │       ├── preview_dialog.py 预览 / 校验对话框
 │       ├── mapping_widgets.py

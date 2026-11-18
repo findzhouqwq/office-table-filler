@@ -224,6 +224,20 @@ def build_stylesheet() -> str:
     QPushButton[role="ghost"]:hover {{
         background: {ACCENT_SOFT};
     }}
+    QPushButton[role="outline"] {{
+        background: {SURFACE};
+        border: 1px solid #C7D2FE;
+        color: {ACCENT};
+        font-weight: 700;
+        padding: 8px 16px;
+    }}
+    QPushButton[role="outline"]:hover {{
+        background: {ACCENT_SOFT};
+        border-color: {ACCENT};
+    }}
+    QPushButton[role="outline"]:pressed {{
+        background: #E0E7FF;
+    }}
     QPushButton[role="danger"] {{
         background: transparent;
         border: 1px solid transparent;
@@ -391,6 +405,170 @@ def build_stylesheet() -> str:
     }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         width: 0;
+    }}
+
+    /* ---------- side panel ---------- */
+    QFrame#SidePanelCard {{
+        background: {SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: 16px;
+    }}
+    QFrame#PanelHeader {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 {ACCENT}, stop:0.55 #6366F1, stop:1 #7C3AED);
+        border: none;
+        border-top-left-radius: 16px;
+        border-top-right-radius: 16px;
+    }}
+    QLabel#PanelLogo {{
+        background: rgba(255, 255, 255, 0.18);
+        border-radius: 9px;
+        color: #FFFFFF;
+        font-size: 16px;
+        font-weight: 700;
+    }}
+    QLabel#PanelTitle {{
+        color: #FFFFFF;
+        font-size: 15px;
+        font-weight: 700;
+    }}
+    QLabel#PanelSubtitle {{
+        color: rgba(255, 255, 255, 0.75);
+        font-size: 11px;
+    }}
+    QToolButton#PanelHeaderButton {{
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.16);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 7px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 600;
+    }}
+    QToolButton#PanelHeaderButton:hover {{
+        background: rgba(255, 255, 255, 0.30);
+    }}
+    QToolButton#PanelHeaderButton:checked {{
+        background: #FFFFFF;
+        color: {ACCENT};
+        border-color: #FFFFFF;
+    }}
+    QFrame#PanelCard {{
+        background: {SURFACE_ALT};
+        border: 1px solid #EDF1F7;
+        border-radius: 12px;
+    }}
+    QLabel#PanelCardTitle {{
+        font-size: 12px;
+        font-weight: 700;
+        color: {TEXT_STRONG};
+    }}
+    QLabel#PanelHint {{
+        font-size: 11px;
+        color: {MUTED};
+    }}
+    QLabel#PanelStatus {{
+        font-size: 11px;
+        color: {MUTED};
+    }}
+    QToolButton#PanelDetectButton {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 #6366F1, stop:1 #8B5CF6);
+        color: #FFFFFF;
+        border: none;
+        border-radius: 9px;
+        padding: 9px 10px;
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QToolButton#PanelDetectButton:hover {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 {ACCENT}, stop:1 #7C3AED);
+    }}
+    QToolButton#PanelDetectButton:pressed {{
+        background: {ACCENT_PRESSED};
+    }}
+    QLineEdit#FieldName {{
+        background: {ACCENT_SOFT};
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 5px 8px;
+        color: {ACCENT_HOVER};
+        font-weight: 600;
+    }}
+    QLineEdit#FieldName:focus {{
+        background: {SURFACE};
+        border: 1px solid #A5B4FC;
+    }}
+    QLineEdit#FieldValue {{
+        background: {SURFACE};
+        border: 1px solid {BORDER};
+        border-radius: 7px;
+        padding: 5px 8px;
+    }}
+    QLineEdit#FieldValue:focus {{
+        border: 1px solid {ACCENT};
+    }}
+    QToolButton#RowCopyButton {{
+        background: {ACCENT_SOFT};
+        color: {ACCENT};
+        border: 1px solid #E0E7FF;
+        border-radius: 7px;
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 700;
+    }}
+    QToolButton#RowCopyButton:hover {{
+        background: #E0E7FF;
+    }}
+    QToolButton#RowDeleteButton {{
+        background: transparent;
+        border: none;
+        color: #94A3B8;
+        border-radius: 7px;
+        font-size: 11px;
+        padding: 2px 5px;
+    }}
+    QToolButton#RowDeleteButton:hover {{
+        color: {DANGER};
+        background: #FEF2F2;
+    }}
+    QToolButton#PanelGhostButton {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: {ACCENT};
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 6px;
+    }}
+    QToolButton#PanelGhostButton:hover {{
+        background: {ACCENT_SOFT};
+    }}
+    QToolButton#PanelGhostDanger {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: {DANGER};
+        font-size: 11px;
+        padding: 4px 6px;
+    }}
+    QToolButton#PanelGhostDanger:hover {{
+        background: #FEF2F2;
+    }}
+    QScrollArea#PanelScroll {{
+        background: transparent;
+        border: none;
+    }}
+    QWidget#PanelBody {{
+        background: transparent;
+    }}
+    QFrame#PanelFooter {{
+        background: {SURFACE};
+        border: none;
+        border-top: 1px solid {BORDER};
+        border-bottom-left-radius: 16px;
+        border-bottom-right-radius: 16px;
     }}
 
     QStatusBar {{

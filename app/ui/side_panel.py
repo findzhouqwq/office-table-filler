@@ -23,13 +23,14 @@ from typing import Callable
 from PySide6.QtCore import (QEasingCurve, QPointF, QPropertyAnimation, QRect,
                             QRectF, Qt, QTimer, Signal)
 from PySide6.QtGui import (QColor, QFont, QGuiApplication, QLinearGradient,
-                           QPainter, QPainterPath)
+                           QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
                                QLayout, QLineEdit, QPushButton, QScrollArea,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from .common import app_settings, confirm
 from .theme import ACCENT, primary_button, set_role
+from ..core.screen_copy import CopyBlock
 
 DEFAULT_FIELDS = ["姓名", "联系电话", "部门"]
 
@@ -57,12 +58,16 @@ class _FieldRow(QWidget):
         self.name_edit.setObjectName("FieldName")
         self.name_edit.setPlaceholderText("字段名")
         self.name_edit.setFixedWidth(84)
+        self.name_edit.setMaxLength(60)
         self.name_edit.setToolTip("字段名，可双击修改")
 
         self.value_edit = QLineEdit(value, self)
         self.value_edit.setObjectName("FieldValue")
         self.value_edit.setPlaceholderText("填写内容，回车复制")
         self.value_edit.setClearButtonEnabled(True)
+        # Values are persisted in QSettings; keep a single field from bloating
+        # the registry value (Windows limits a setting to roughly 1 MB).
+        self.value_edit.setMaxLength(4000)
 
         self.copy_btn = QToolButton(self)
         self.copy_btn.setObjectName("RowCopyButton")
@@ -106,13 +111,22 @@ class _Rail(QWidget):
     """The slim gradient tab shown while the panel is collapsed."""
 
     clicked = Signal()
+    copy_clicked = Signal()
+
+    COPY_SIZE = 26
+    COPY_TOP = 12
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("展开填表助手")
+        self.setToolTip("点绿色按钮开始跨文件框选；点其他位置展开填表助手")
         self.setAttribute(Qt.WA_Hover, True)
         self._hover = False
+
+    def copy_hit_rect(self) -> QRect:
+        """Screen-relative area of the green quick-action button."""
+        return QRect((self.width() - self.COPY_SIZE) // 2, self.COPY_TOP,
+                     self.COPY_SIZE, self.COPY_SIZE)
 
     def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
         self._hover = True
@@ -126,7 +140,10 @@ class _Rail(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
-            self.clicked.emit()
+            if self.copy_hit_rect().contains(event.position().toPoint()):
+                self.copy_clicked.emit()
+            else:
+                self.clicked.emit()
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802
@@ -144,6 +161,15 @@ class _Rail(QWidget):
         path = QPainterPath()
         path.addRoundedRect(rect, 15, 15)
         painter.fillPath(path, gradient)
+
+        # Green shortcut: start the cross-file selection without expanding.
+        button = QRectF(self.copy_hit_rect())
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#22C55E"))
+        painter.drawRoundedRect(button, 8, 8)
+        painter.setPen(QPen(QColor(255, 255, 255, 240), 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(button.adjusted(6, 6, -6, -6))
 
         painter.setPen(QColor(255, 255, 255, 235))
         font = QFont(self.font())
@@ -232,6 +258,10 @@ class SidePanel(QWidget):
             app_settings().value("side_panel/pinned", True, type=bool))
         self.headers_provider: Callable[[], list[str]] | None = None
         self.target_provider: Callable[[], dict | None] | None = None
+        self._filling = False
+        self._pasting = False
+        self._copy_blocks: list[CopyBlock] = []
+        self._overlay = None
 
         flags = Qt.Tool | Qt.FramelessWindowHint
         if self._always_on_top:
@@ -277,6 +307,7 @@ class SidePanel(QWidget):
         self._rail = _Rail(self._card)
         self._rail.setFixedWidth(self.RAIL_WIDTH)
         self._rail.clicked.connect(lambda: self.set_collapsed(False))
+        self._rail.copy_clicked.connect(self._on_rail_copy)
         self._rail.setVisible(False)
         card_layout.addWidget(self._rail)
 
@@ -423,6 +454,64 @@ class SidePanel(QWidget):
 
         layout.addWidget(card, 1)
 
+        copy_card = QFrame()
+        copy_card.setObjectName("PanelCard")
+        copy_layout = QVBoxLayout(copy_card)
+        copy_layout.setContentsMargins(12, 10, 12, 10)
+        copy_layout.setSpacing(7)
+
+        copy_head = QHBoxLayout()
+        copy_head.setContentsMargins(0, 0, 0, 0)
+        copy_head.setSpacing(6)
+        copy_title = QLabel("跨文件复制", copy_card)
+        copy_title.setObjectName("PanelCardTitle")
+        copy_head.addWidget(copy_title)
+        copy_head.addStretch(1)
+        copy_badge = QLabel("绿色框选", copy_card)
+        copy_badge.setObjectName("PanelGreenBadge")
+        copy_head.addWidget(copy_badge)
+        copy_layout.addLayout(copy_head)
+
+        copy_hint = QLabel(
+            "长按右键在 Excel / WPS 单元格上拖动，可框选多块；"
+            "再一键追加到当前目标表末尾。", copy_card)
+        copy_hint.setObjectName("PanelHint")
+        copy_hint.setWordWrap(True)
+        copy_layout.addWidget(copy_hint)
+
+        self.screen_copy_btn = QToolButton(copy_card)
+        self.screen_copy_btn.setObjectName("PanelGreenButton")
+        self.screen_copy_btn.setText("开始框选（长按右键拖动）")
+        self.screen_copy_btn.setToolTip(
+            "开启全屏绿色框选：长按右键拖动选择单元格，可连续框选多块")
+        self.screen_copy_btn.setCursor(Qt.PointingHandCursor)
+        self.screen_copy_btn.setSizePolicy(QSizePolicy.Expanding,
+                                           QSizePolicy.Fixed)
+        self.screen_copy_btn.clicked.connect(self.start_screen_copy)
+        copy_layout.addWidget(self.screen_copy_btn)
+
+        copy_actions = QHBoxLayout()
+        copy_actions.setContentsMargins(0, 0, 0, 0)
+        copy_actions.setSpacing(6)
+        self.paste_blocks_btn = QToolButton(copy_card)
+        self.paste_blocks_btn.setObjectName("PanelGreenOutline")
+        self.paste_blocks_btn.setText("一键粘贴")
+        self.paste_blocks_btn.setToolTip(
+            "把已框选的数据追加到主界面当前目标表格末尾（自动备份）")
+        self.paste_blocks_btn.setCursor(Qt.PointingHandCursor)
+        self.paste_blocks_btn.setSizePolicy(QSizePolicy.Expanding,
+                                            QSizePolicy.Fixed)
+        self.paste_blocks_btn.clicked.connect(self.paste_blocks)
+        copy_actions.addWidget(self.paste_blocks_btn, 1)
+
+        self.clear_copy_btn = self._flat_button("清空", "清空已复制的表格数据",
+                                                danger=True)
+        self.clear_copy_btn.clicked.connect(self.clear_copy_blocks)
+        copy_actions.addWidget(self.clear_copy_btn)
+        copy_layout.addLayout(copy_actions)
+
+        layout.addWidget(copy_card)
+
         tips = QFrame()
         tips.setObjectName("PanelCard")
         tips_layout = QVBoxLayout(tips)
@@ -442,6 +531,7 @@ class SidePanel(QWidget):
             tips_layout.addWidget(tip)
         layout.addWidget(tips)
         scroll.setWidget(body)
+        self._update_copy_buttons()
         return scroll
 
     def _build_footer(self) -> QWidget:
@@ -508,12 +598,18 @@ class SidePanel(QWidget):
         self._schedule_save()
 
     def copy_row(self) -> None:
-        values = [value.strip() for _, value in self.fields() if value.strip()]
-        if not values:
+        values = [value.strip() for _, value in self.fields()]
+        last = max((index for index, value in enumerate(values) if value),
+                   default=-1)
+        if last < 0:
             self._set_status("还没有可复制的内容，请先填写字段值。")
             return
+        # Keep empty columns in the middle: dropping them would shift all
+        # following values one column to the left when pasted.
+        values = values[:last + 1]
         QApplication.clipboard().setText("\t".join(values))
-        self._set_status(f"已复制整行（{len(values)} 个字段），可直接粘贴到表格行。")
+        self._set_status(
+            f"已复制整行（{len(values)} 列，空列保留），可直接粘贴到表格行。")
 
     def _read_headers(self) -> None:
         headers = self._headers()
@@ -535,22 +631,47 @@ class SidePanel(QWidget):
     # -- clipboard detection ----------------------------------------------
     def detect_clipboard(self) -> None:
         """Read the clipboard, classify it and align it with the target headers."""
-        from ..core.field_detect import detect_fields, map_to_headers
+        from ..core.field_detect import (detect_fields, map_to_headers,
+                                         split_positional_row)
 
         text = QApplication.clipboard().text()
         if not text or not text.strip():
             self._set_status("剪贴板是空的，先复制一段文字再试。")
             return
+
+        headers = self._headers()
+        row = split_positional_row(text)
+        if (row and headers and len(row) == len(headers)
+                and len(set(headers)) == len(headers)):
+            existing = {label: value
+                        for label, value in self.fields() if value.strip()}
+            self._clear_rows()
+            for header, value in zip(headers, row):
+                self.add_field(header, value or existing.get(header, ""),
+                               save=False)
+            self._empty_hint.setVisible(not self._rows)
+            self._schedule_save()
+            self._set_status(
+                f"已按列顺序识别 {len(row)} 列并填入表头；"
+                "点「直接填入目标表格」追加新行。")
+            return
+
         detected = detect_fields(text)
         if not detected:
             self._set_status("没有识别到可分类的内容，可手动填写或读取表头。")
             return
 
-        headers = self._headers()
         if not headers:
+            existing = {label: value
+                        for label, value in self.fields() if value.strip()}
+            used: set[str] = set()
             self._clear_rows()
             for field in detected:
-                self.add_field(field.label, field.value, save=False)
+                if field.label in used:
+                    continue
+                used.add(field.label)
+                self.add_field(field.label,
+                               existing.get(field.label, field.value), save=False)
             self._empty_hint.setVisible(False)
             self._schedule_save()
             self._set_status(
@@ -584,44 +705,191 @@ class SidePanel(QWidget):
         from ..core.errors import FillError
         from ..core.field_detect import append_fields
 
+        if self._filling:
+            return
         info = None
         if self.target_provider is not None:
             try:
                 info = self.target_provider()
             except Exception:  # noqa: BLE001 - a helper must never crash the panel
                 info = None
+        if not isinstance(info, dict):
+            info = {}
         path = str((info or {}).get("path", "") or "").strip()
         if not path:
             self._set_status("请先在主界面选择目标表格，再点「直接填入」。")
             return
-        values = {label: value for label, value in self.fields() if value.strip()}
+        values = {label.strip(): value
+                  for label, value in self.fields()
+                  if label.strip() and value.strip()}
         if not values:
-            self._set_status("没有可填入的内容，请先识别剪贴板或填写字段值。")
+            self._set_status("没有可填入的内容，请先识别剪贴板或填写字段名和值。")
             return
 
         sheet = str(info.get("sheet", "") or "")
-        header_row = max(1, int(info.get("header_row", 1) or 1))
+        try:
+            header_row = max(1, int(info.get("header_row", 1) or 1))
+        except (TypeError, ValueError):
+            header_row = 1
         output = str(info.get("output_path", "") or "").strip()
         target = output or path
-        if not confirm(
-            self, "直接填入表格",
-            f"将把 {len(values)} 个字段作为新行追加到：\n{target}\n"
-            f"工作表：{sheet or '当前工作表'}（表头第 {header_row} 行）\n\n"
-            "写入前会自动备份原文件。继续吗？",
-        ):
-            return
+
+        prompt = (f"将把 {len(values)} 个字段作为新行追加到：\n{target}\n")
+        if output and os.path.abspath(output) != os.path.abspath(path):
+            prompt += f"源表格：{path}\n"
+        prompt += (f"工作表：{sheet or '当前工作表'}（表头第 {header_row} 行）\n\n"
+                   "字段按实际表头自动匹配，未匹配的会跳过。写入前自动备份。继续吗？")
+
+        self._filling = True
+        self.fill_btn.setEnabled(False)
         try:
-            report = append_fields(path, values, sheet=sheet,
-                                   header_row=header_row, output_path=output)
+            if not confirm(self, "直接填入表格", prompt):
+                return
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                report = append_fields(path, values, sheet=sheet,
+                                       header_row=header_row, output_path=output)
+            finally:
+                QApplication.restoreOverrideCursor()
         except FillError as exc:
             self._set_status(str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - surface IO errors in the panel
             self._set_status(f"写入失败：{exc}")
             return
+        finally:
+            self.fill_btn.setEnabled(True)
+            self._filling = False
+
+        message = (f"已写入第 {report.row} 行（{report.matched} 个字段）→ "
+                   f"{os.path.basename(report.path)}")
+        if report.skipped:
+            labels = "、".join(report.skipped[:6])
+            if len(report.skipped) > 6:
+                labels += "…"
+            message += f"；未匹配：{labels}"
+        if report.warning:
+            message += f"；注意：{report.warning}"
+        self._set_status(message)
+
+    # -- cross-file block copy --------------------------------------------
+    def _on_rail_copy(self) -> None:
+        """Green shortcut on the collapsed rail: expand, then start selecting."""
+        self.show_panel()
+        self.start_screen_copy()
+
+    def start_screen_copy(self) -> None:
+        """Open the full-screen green selector over Excel / WPS."""
+        from ..core.screen_copy import screen_copy_available
+
+        available, reason = screen_copy_available()
+        if not available:
+            self._set_status(reason)
+            return
+        from .screen_select import SelectionOverlay
+
+        if self._overlay is None:
+            self._overlay = SelectionOverlay()
+            self._overlay.finished.connect(self._on_blocks_copied)
+            self._overlay.cancelled.connect(self._on_screen_copy_cancelled)
+        self._overlay.start()
         self._set_status(
-            f"已写入第 {report.row} 行（{report.matched} 个字段）→ "
-            f"{os.path.basename(report.path)}")
+            "框选已开启：长按右键拖动选择单元格，可连续框选多块；"
+            "Enter 完成，Esc 取消。")
+
+    def _on_blocks_copied(self, blocks: list, errors: list) -> None:
+        self._copy_blocks.extend(blocks)
+        self._update_copy_buttons()
+        rows = sum(block.height for block in self._copy_blocks)
+        message = (f"已复制 {len(blocks)} 块，缓冲区共 "
+                   f"{len(self._copy_blocks)} 块 / {rows} 行；"
+                   "切换到目标文件后点「一键粘贴」。")
+        if errors:
+            message += f"（{len(errors)} 块未读取：{errors[0]}）"
+        self._set_status(message)
+        self.raise_()
+        self.activateWindow()
+
+    def _on_screen_copy_cancelled(self) -> None:
+        self._set_status("已取消框选。")
+
+    def paste_blocks(self) -> None:
+        """Append the copied blocks to the current target workbook."""
+        from ..core.errors import FillError
+        from ..core.screen_copy import append_blocks
+
+        if self._pasting or not self._copy_blocks:
+            return
+        info = None
+        if self.target_provider is not None:
+            try:
+                info = self.target_provider()
+            except Exception:  # noqa: BLE001 - a helper must never crash the panel
+                info = None
+        if not isinstance(info, dict):
+            info = {}
+        path = str(info.get("path", "") or "").strip()
+        if not path:
+            self._set_status("请先在主界面选择目标表格，再点「一键粘贴」。")
+            return
+
+        sheet = str(info.get("sheet", "") or "")
+        try:
+            header_row = max(1, int(info.get("header_row", 1) or 1))
+        except (TypeError, ValueError):
+            header_row = 1
+        output = str(info.get("output_path", "") or "").strip()
+        target = output or path
+        blocks = list(self._copy_blocks)
+        rows = sum(block.height for block in blocks)
+
+        prompt = (f"将把复制的 {len(blocks)} 块数据（共 {rows} 行）追加到：\n"
+                  f"{target}\n工作表：{sheet or '当前工作表'}"
+                  f"（表头第 {header_row} 行）\n\n"
+                  "从表格末尾插入，保留现有数据；写入前自动备份。继续吗？")
+        if not confirm(self, "一键粘贴表格数据", prompt):
+            return
+
+        self._pasting = True
+        self._update_copy_buttons()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            report = append_blocks(path, blocks, sheet=sheet,
+                                   header_row=header_row,
+                                   output_path=output)
+        except FillError as exc:
+            self._set_status(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - surface IO errors in the panel
+            self._set_status(f"粘贴失败：{exc}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._pasting = False
+            self._update_copy_buttons()
+
+        message = (f"已粘贴 {report.blocks} 块 / {report.rows} 行到第 "
+                   f"{report.start_row}-{report.end_row} 行 → "
+                   f"{os.path.basename(report.path)}")
+        if report.warning:
+            message += f"；注意：{report.warning}"
+        self._set_status(message + "（缓冲区保留，可继续粘贴到其他文件）")
+
+    def clear_copy_blocks(self) -> None:
+        if not self._copy_blocks:
+            return
+        self._copy_blocks.clear()
+        self._update_copy_buttons()
+        self._set_status("已清空复制的表格数据。")
+
+    def _update_copy_buttons(self) -> None:
+        if not hasattr(self, "paste_blocks_btn"):
+            return
+        count = len(self._copy_blocks)
+        self.paste_blocks_btn.setText(
+            f"一键粘贴 {count} 块" if count else "一键粘贴")
+        self.paste_blocks_btn.setEnabled(bool(count) and not self._pasting)
+        self.clear_copy_btn.setEnabled(bool(count))
 
     def _clear_fields(self) -> None:
         self._clear_rows()
@@ -756,6 +1024,8 @@ class SidePanel(QWidget):
         self._anim.stop()
         self._anim_done = None
         self._save_timer.stop()
+        if self._overlay is not None and self._overlay.isVisible():
+            self._overlay.cancel()
         self._save_fields()
         self.hide()
         self.closed.emit()

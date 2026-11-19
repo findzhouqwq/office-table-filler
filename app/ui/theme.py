@@ -488,6 +488,49 @@ def build_stylesheet() -> str:
     QToolButton#PanelDetectButton:pressed {{
         background: {ACCENT_PRESSED};
     }}
+    QLabel#PanelGreenBadge {{
+        background: #DCFCE7;
+        color: #15803D;
+        border-radius: 8px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 700;
+    }}
+    QToolButton#PanelGreenButton {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 #16A34A, stop:1 #22C55E);
+        color: #FFFFFF;
+        border: none;
+        border-radius: 9px;
+        padding: 9px 10px;
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QToolButton#PanelGreenButton:hover {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 #15803D, stop:1 #16A34A);
+    }}
+    QToolButton#PanelGreenButton:pressed {{
+        background: #15803D;
+    }}
+    QToolButton#PanelGreenOutline {{
+        background: #F0FDF4;
+        color: #15803D;
+        border: 1px solid #BBF7D0;
+        border-radius: 9px;
+        padding: 8px 10px;
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QToolButton#PanelGreenOutline:hover {{
+        background: #DCFCE7;
+        border-color: #86EFAC;
+    }}
+    QToolButton#PanelGreenOutline:disabled {{
+        background: #F7FCF9;
+        border-color: #E7F5EC;
+        color: #A7D8BC;
+    }}
     QLineEdit#FieldName {{
         background: {ACCENT_SOFT};
         border: 1px solid transparent;

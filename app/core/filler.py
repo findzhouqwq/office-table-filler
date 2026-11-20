@@ -241,21 +241,24 @@ def fill_from_images(request: ImageFillRequest,
                     if not matrix:
                         report.warn(f"{os.path.basename(image_path)}：未识别到表格内容。")
                         continue
-                    # "写入位置" applies to the whole block: shift grid rows so
-                    # that the first cell lands on the requested column.
-                    offset = anchor_col - 1
-                    for row_index, row in enumerate(matrix):
+                    # "写入位置" applies to the whole block: the first cell lands
+                    # on the requested column.  Collect the rows and write them
+                    # in one call; per-row writes re-resolved the worksheet.
+                    block_rows: list[list[object]] = []
+                    for row in matrix:
                         trimmed = [clean_text(v) for v in row]
                         if not any(trimmed):
                             continue
-                        values = ([""] * offset + trimmed) if offset else trimmed
-                        engine.write_row(sheet, cursor_row, values)
+                        block_rows.append(list(trimmed))
                         report.add(FillRecord(
-                            target=f"{sheet}!{_col_letter(anchor_col)}{cursor_row}",
+                            target=(f"{sheet}!{_col_letter(anchor_col)}"
+                                    f"{cursor_row + len(block_rows) - 1}"),
                             value=" | ".join(trimmed), source=os.path.basename(image_path),
                             file=image_path,
                         ))
-                        cursor_row += 1
+                    if block_rows:
+                        engine.write_block(sheet, cursor_row, anchor_col, block_rows)
+                        cursor_row += len(block_rows)
             # Only persist on success and never in preview mode: saving in
             # ``finally`` would overwrite the target with a partial workbook.
             if request.dry_run:
@@ -316,14 +319,19 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
         else:
             start_row = 1
         plan = request.column_plan or _default_plan(records, header_map)
+        width = max(width, len(plan))
+        pending: list[list[object]] = []
         for offset, record in enumerate(records):
-            row = _row_values_from_plan(plan, record, header_map, max(width, len(plan)))
-            eng.write_row(sheet, start_row + offset, row)
+            row = _row_values_from_plan(plan, record, header_map, width)
+            pending.append(row)
             report.add(FillRecord(
                 target=f"{sheet}!{_col_letter(1)}{start_row + offset}",
                 value=" | ".join(str(v) for v in row),
                 source=f"记录{offset + 1}", file=request.target_path,
             ))
+        # One bulk write; a per-row call re-resolves the worksheet every time.
+        if pending:
+            eng.write_rows(sheet, start_row, pending)
         if request.dry_run:
             report.warn("预览模式：未保存任何文件。")
         else:

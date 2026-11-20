@@ -56,6 +56,47 @@ class SpreadsheetTests(unittest.TestCase):
         self.assertEqual(eng.cell_value("Sheet", "A4"), 5)
         eng.close()
 
+    def test_read_block_and_bulk_write(self):
+        from openpyxl import Workbook, load_workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "数据"
+        ws.append(["姓名", "工号"])
+        ws.append(["张三", "E001"])
+        ws.append([None, None])
+        ws.append(["李四", "E002"])
+        wb.save(self.path)
+
+        eng = OpenpyxlEngine()
+        eng.open(self.path)
+        self.assertEqual(eng.read_block("数据", 1, 1, 4, 2), [
+            ["姓名", "工号"], ["张三", "E001"], [None, None], ["李四", "E002"]])
+        self.assertEqual(eng.read_block("数据", 3, 1, 4, 2), [
+            [None, None], ["李四", "E002"]])
+        self.assertEqual(eng.read_block("数据", 5, 1, 4, 2), [])
+        self.assertEqual(eng.write_rows("数据", 6, [["王五", "E003"], ["赵六", "E004"]]), 2)
+        eng.save(self.path)
+        eng.close()
+        self.assertEqual(load_workbook(self.path)["数据"]["A7"].value, "赵六")
+
+    def test_load_spreadsheet_skips_blank_rows(self):
+        from openpyxl import Workbook
+
+        from app.core.data_io import load_spreadsheet
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "数据"
+        ws.append(["姓名", "工号"])
+        ws.append(["张三", "E001"])
+        ws.append([None, None])
+        ws.append(["李四", "E002"])
+        wb.save(self.path)
+
+        table = load_spreadsheet(self.path, header_row=1)
+        self.assertEqual(table.headers, ["姓名", "工号"])
+        self.assertEqual(table.rows, [["张三", "E001"], ["李四", "E002"]])
+
     def test_missing_file(self):
         from app.core.errors import EngineError
         eng = OpenpyxlEngine()

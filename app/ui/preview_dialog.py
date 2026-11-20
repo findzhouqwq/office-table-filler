@@ -52,9 +52,13 @@ class PreviewDialog(QDialog):
             table.setColumnCount(len(self.result.headers))
             table.setHorizontalHeaderLabels(self.result.headers)
         table.setRowCount(len(self.result.rows))
-        for r, row in enumerate(self.result.rows):
-            for c, value in enumerate(row):
-                table.setItem(r, c, QTableWidgetItem(str(value)))
+        table.setUpdatesEnabled(False)
+        try:
+            for r, row in enumerate(self.result.rows):
+                for c, value in enumerate(row):
+                    table.setItem(r, c, QTableWidgetItem(str(value)))
+        finally:
+            table.setUpdatesEnabled(True)
         if self.result.truncated:
             table.setToolTip(f"仅显示前 {len(self.result.rows)} 行")
         layout.addWidget(table, 1)

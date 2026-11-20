@@ -90,6 +90,28 @@ class SelectionOverlay(QWidget):
         self._hold_timer.setInterval(HOLD_MS)
         self._hold_timer.timeout.connect(self._start_drag)
 
+        # Cached paint resources: rebuilding QColor/QPen/QFont for every mouse
+        # move is measurable on low-end machines with software rendering.
+        self._veil = QColor(2, 6, 23, 36)
+        self._region_fill = QColor(34, 197, 94, 58)
+        self._green = QColor(GREEN)
+        self._green_dark = QColor(GREEN_DARK)
+        self._white = QColor("#FFFFFF")
+        self._hud_bg = QColor(15, 23, 42, 225)
+        self._hud_text = QColor(226, 232, 240, 205)
+        self._hud_accent = QColor("#86EFAC")
+        self._pen_solid = QPen(self._green, 2)
+        self._pen_dashed = QPen(self._green, 2)
+        self._pen_dashed.setStyle(Qt.DashLine)
+        self._badge_font = QFont(self.font())
+        self._badge_font.setPointSize(9)
+        self._badge_font.setBold(True)
+        self._title_font = QFont(self.font())
+        self._title_font.setPointSize(12)
+        self._title_font.setBold(True)
+        self._hud_font = QFont(self.font())
+        self._hud_font.setPointSize(10)
+
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
         """Show the overlay over the whole virtual desktop."""
@@ -116,6 +138,17 @@ class SelectionOverlay(QWidget):
             rect = primary.geometry() if primary is not None else QRect(0, 0, 1920, 1080)
         return rect
 
+    def _hud_rect(self) -> QRect:
+        width = min(660, max(360, self.width() - 48))
+        return QRect(int((self.width() - width) / 2) - 2, 22, width + 4, 100)
+
+    def _update_hud(self) -> None:
+        self.update(self._hud_rect())
+
+    @staticmethod
+    def _inflate(rect: QRect) -> QRect:
+        return rect.adjusted(-3, -3, 3, 3)
+
     # -- physical coordinates ---------------------------------------------
     def _to_physical(self, point: QPoint) -> tuple[int, int]:
         physical = _physical_cursor()
@@ -137,7 +170,7 @@ class SelectionOverlay(QWidget):
         self._current = None
         self._hint = "按住右键稍候，拖动即可框选"
         self._hold_timer.start()
-        self.update()
+        self._update_hud()
         event.accept()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
@@ -152,8 +185,14 @@ class SelectionOverlay(QWidget):
             # The user pressed and dragged right away: do not force them to
             # wait for the hold timer.
             self._start_drag()
+        old = self._current
         self._current = QRect(self._press_widget, pos).normalized()
-        self.update()
+        # Repaint only the old + new rubber band instead of the whole screen;
+        # this keeps dragging smooth on 4K / low-end machines.
+        dirty = self._inflate(self._current)
+        if old is not None:
+            dirty = dirty.united(self._inflate(old))
+        self.update(dirty)
         event.accept()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
@@ -161,9 +200,13 @@ class SelectionOverlay(QWidget):
             super().mouseReleaseEvent(event)
             return
         self._hold_timer.stop()
+        dirty = self._hud_rect()
+        if self._current is not None:
+            dirty = dirty.united(self._inflate(self._current))
         if self._dragging and self._press_widget is not None:
             pos = event.position().toPoint()
             rect = QRect(self._press_widget, pos).normalized()
+            dirty = dirty.united(self._inflate(rect))
             right = self._to_physical(pos)
             if (rect.width() >= MIN_DRAG and rect.height() >= MIN_DRAG
                     and self._press_screen is not None):
@@ -181,7 +224,7 @@ class SelectionOverlay(QWidget):
         self._current = None
         self._press_widget = None
         self._press_screen = None
-        self.update()
+        self.update(dirty)
         event.accept()
 
     def _start_drag(self) -> None:
@@ -191,7 +234,7 @@ class SelectionOverlay(QWidget):
         self._dragging = True
         self._current = QRect(self._press_widget, self._press_widget)
         self._hint = "拖动到选区右下角，松开完成这一块"
-        self.update()
+        self.update(self._hud_rect().united(self._inflate(self._current)))
 
     # -- keyboard ----------------------------------------------------------
     def keyPressEvent(self, event) -> None:  # noqa: N802
@@ -207,22 +250,29 @@ class SelectionOverlay(QWidget):
             return
         if key == Qt.Key_Backspace or (
                 key == Qt.Key_Z and modifiers & Qt.ControlModifier):
+            dirty = self._hud_rect()
             if self._regions:
-                self._regions.pop()
+                removed = self._regions.pop()
+                dirty = dirty.united(self._inflate(removed.widget_rect))
                 self._hint = f"已撤销一块，还剩 {len(self._regions)} 块"
             elif self._dragging:
+                if self._current is not None:
+                    dirty = dirty.united(self._inflate(self._current))
                 self._dragging = False
                 self._current = None
                 self._press_widget = None
                 self._hint = "已取消当前框选"
-            self.update()
+            self.update(dirty)
             event.accept()
             return
         if key == Qt.Key_Delete:
             if self._regions:
+                dirty = self._hud_rect()
+                for region in self._regions:
+                    dirty = dirty.united(self._inflate(region.widget_rect))
                 self._regions.clear()
                 self._hint = "已清空全部选区"
-                self.update()
+                self.update(dirty)
             event.accept()
             return
         super().keyPressEvent(event)
@@ -232,7 +282,7 @@ class SelectionOverlay(QWidget):
         """Read every selected region and emit :attr:`finished`."""
         if not self._regions:
             self._hint = "请先长按右键拖动，框选至少一块单元格区域"
-            self.update()
+            self._update_hud()
             return
 
         blocks: list[CopyBlock] = []
@@ -257,7 +307,7 @@ class SelectionOverlay(QWidget):
 
         if not blocks:
             self._hint = errors[0] if errors else "选区内没有读到数据，请重新框选"
-            self.update()
+            self._update_hud()
             return
         self._done = True
         self.hide()
@@ -280,70 +330,62 @@ class SelectionOverlay(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        # Slight dark veil so the green selection stands out on white sheets.
-        painter.fillRect(self.rect(), QColor(2, 6, 23, 36))
+        dirty = event.rect()
+        # Only touch the exposed area: a full-screen fill on a 4K desktop costs
+        # several milliseconds per mouse move with software rendering.
+        painter.fillRect(dirty, self._veil)
 
         for index, region in enumerate(self._regions, start=1):
-            self._paint_region(painter, region.widget_rect, index)
-        if self._current is not None:
+            if region.widget_rect.intersects(dirty):
+                self._paint_region(painter, region.widget_rect, index)
+        if self._current is not None and self._current.intersects(dirty):
             self._paint_region(painter, self._current, None, dashed=True)
-        self._paint_hud(painter)
+        if self._hud_rect().intersects(dirty):
+            self._paint_hud(painter)
         painter.end()
 
     def _paint_region(self, painter: QPainter, rect: QRect,
                       index: int | None, dashed: bool = False) -> None:
         if rect.width() < 2 or rect.height() < 2:
             return
-        painter.fillRect(rect, QColor(34, 197, 94, 58))
-        pen = QPen(QColor(GREEN), 2)
-        if dashed:
-            pen.setStyle(Qt.DashLine)
-        painter.setPen(pen)
+        painter.fillRect(rect, self._region_fill)
+        painter.setPen(self._pen_dashed if dashed else self._pen_solid)
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
         if index is not None:
             badge = QRectF(rect.left() + 6, rect.top() + 6, 28, 21)
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(GREEN_DARK))
+            painter.setBrush(self._green_dark)
             painter.drawRoundedRect(badge, 6, 6)
-            font = QFont(self.font())
-            font.setPointSize(9)
-            font.setBold(True)
-            painter.setFont(font)
-            painter.setPen(QColor("#FFFFFF"))
+            painter.setFont(self._badge_font)
+            painter.setPen(self._white)
             painter.drawText(badge, Qt.AlignCenter, str(index))
 
     def _paint_hud(self, painter: QPainter) -> None:
-        width = min(660, max(360, self.width() - 48))
-        box = QRectF((self.width() - width) / 2.0, 24, width, 96)
+        box = QRectF(self._hud_rect().adjusted(2, 2, -2, -2))
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(15, 23, 42, 225))
+        painter.setBrush(self._hud_bg)
         painter.drawRoundedRect(box, 14, 14)
 
         # Small green indicator dot.
-        painter.setBrush(QColor(GREEN))
+        painter.setBrush(self._green)
         painter.drawEllipse(QRectF(box.left() + 16, box.top() + 17, 9, 9))
 
-        title_font = QFont(self.font())
-        title_font.setPointSize(12)
-        title_font.setBold(True)
-        painter.setFont(title_font)
-        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(self._title_font)
+        painter.setPen(self._white)
         painter.drawText(
             QRectF(box.left() + 32, box.top() + 8, box.width() - 44, 26),
             Qt.AlignLeft | Qt.AlignVCenter,
             "跨文件复制 · 长按右键拖动框选单元格")
 
-        hint_font = QFont(self.font())
-        hint_font.setPointSize(10)
-        painter.setFont(hint_font)
-        painter.setPen(QColor(226, 232, 240, 205))
+        painter.setFont(self._hud_font)
+        painter.setPen(self._hud_text)
         painter.drawText(
             QRectF(box.left() + 17, box.top() + 36, box.width() - 34, 20),
             Qt.AlignLeft | Qt.AlignVCenter,
             "Enter 完成 · Esc 取消 · Backspace 撤销 · Delete 清空")
-        painter.setPen(QColor("#86EFAC"))
+        painter.setPen(self._hud_accent)
         count = f"已选 {len(self._regions)} 块"
         if self._hint:
             count += f" · {self._hint}"

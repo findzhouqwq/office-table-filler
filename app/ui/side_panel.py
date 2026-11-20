@@ -245,6 +245,10 @@ class SidePanel(QWidget):
     PANEL_WIDTH = 348
     RAIL_WIDTH = 38
     SHADOW_MARGIN = 14  # transparent left + right margins used by the shadow
+    # Keep the clipboard small enough for low-memory office PCs; one block can
+    # already hold 50k cells, so more than a few must not pile up silently.
+    MAX_COPY_BLOCKS = 200
+    MAX_COPY_CELLS = 200_000
 
     closed = Signal()
     collapsed_changed = Signal(bool)
@@ -798,12 +802,28 @@ class SidePanel(QWidget):
             "Enter 完成，Esc 取消。")
 
     def _on_blocks_copied(self, blocks: list, errors: list) -> None:
-        self._copy_blocks.extend(blocks)
+        cells = sum(block.height * block.width for block in self._copy_blocks)
+        accepted: list = []
+        skipped = 0
+        for block in blocks:
+            size = block.height * block.width
+            full = (len(self._copy_blocks) + len(accepted) >= self.MAX_COPY_BLOCKS
+                    or cells + size > self.MAX_COPY_CELLS)
+            if full:
+                skipped += 1
+                continue
+            accepted.append(block)
+            cells += size
+        self._copy_blocks.extend(accepted)
         self._update_copy_buttons()
         rows = sum(block.height for block in self._copy_blocks)
-        message = (f"已复制 {len(blocks)} 块，缓冲区共 "
+        message = (f"已复制 {len(accepted)} 块，缓冲区共 "
                    f"{len(self._copy_blocks)} 块 / {rows} 行；"
                    "切换到目标文件后点「一键粘贴」。")
+        if skipped:
+            message += (f"（缓冲区最多 {self.MAX_COPY_BLOCKS} 块 / "
+                        f"{self.MAX_COPY_CELLS} 个单元格，"
+                        f"{skipped} 块未加入，请先粘贴或清空）")
         if errors:
             message += f"（{len(errors)} 块未读取：{errors[0]}）"
         self._set_status(message)

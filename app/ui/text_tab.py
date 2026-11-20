@@ -259,9 +259,14 @@ class TextTab(QWidget):
         self.preview_table.setColumnCount(len(self.headers))
         self.preview_table.horizontalHeader().setVisible(True)
         self.preview_table.setHorizontalHeaderLabels(self.headers)
-        for r, record in enumerate(self.records[:200]):
-            for c, head in enumerate(self.headers):
-                self.preview_table.setItem(r, c, QTableWidgetItem(str(record.get(head, ""))))
+        self.preview_table.setUpdatesEnabled(False)
+        try:
+            for r, record in enumerate(self.records[:200]):
+                for c, head in enumerate(self.headers):
+                    self.preview_table.setItem(
+                        r, c, QTableWidgetItem(str(record.get(head, ""))))
+        finally:
+            self.preview_table.setUpdatesEnabled(True)
 
     def _auto_map(self) -> None:
         target_headers = [h for h in clean_text(self.target_header_edit.toPlainText()).split("、") if h]

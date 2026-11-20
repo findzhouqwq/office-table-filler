@@ -108,6 +108,23 @@ class SpreadsheetEngine:
     def header_map(self, sheet: str, row: int = 1) -> dict[str, str]:
         raise NotImplementedError
 
+    def read_block(self, sheet: str, min_row: int, min_col: int,
+                   max_row: int, max_col: int) -> list[list[object]]:
+        """Read a rectangle in one go, row by row.
+
+        The default implementation goes through :meth:`cell_value`; engines
+        override it with a bulk read so loading a large source sheet does not
+        pay coordinate parsing for every single cell.
+        """
+        rows: list[list[object]] = []
+        for row in range(int(min_row), int(max_row) + 1):
+            values: list[object] = []
+            for col in range(int(min_col), int(max_col) + 1):
+                values.append(self.cell_value(
+                    sheet, f"{get_column_letter(col)}{row}"))
+            rows.append(values)
+        return rows
+
     # -- writing -----------------------------------------------------------
     def write_value(self, sheet: str, coord: str, value: object) -> None:
         raise NotImplementedError
@@ -254,6 +271,16 @@ class OpenpyxlEngine(SpreadsheetEngine):
         value = ws[coord].value
         return value is not None and str(value).strip() != ""
 
+    def read_block(self, sheet: str, min_row: int, min_col: int,
+                   max_row: int, max_col: int) -> list[list[object]]:
+        ws = self._ws(sheet)
+        if int(min_row) > int(max_row) or int(min_col) > int(max_col):
+            return []
+        return [list(row) for row in ws.iter_rows(
+            min_row=max(1, int(min_row)), max_row=int(max_row),
+            min_col=max(1, int(min_col)), max_col=int(max_col),
+            values_only=True)]
+
     def header_map(self, sheet: str, row: int = 1) -> dict[str, str]:
         ws = self._ws(sheet)
         mapping: dict[str, str] = {}
@@ -277,16 +304,39 @@ class OpenpyxlEngine(SpreadsheetEngine):
         _validate_coord(coord)
         _set_cell_value(ws[coord], value)
 
+    def write_block(self, sheet: str, start_row: int, start_col: int,
+                    rows: Iterable[Sequence[object]]) -> int:
+        """Write a rectangular block from *start_row*/*start_col*.
+
+        Resolves the worksheet once and uses ``ws.cell(row=, column=)`` so the
+        hot path avoids re-parsing a coordinate string for every cell – several
+        times faster than repeated :meth:`write_value` calls on large blocks.
+        Returns the number of rows written.
+        """
+        ws = self._ws(sheet)
+        written = 0
+        for row_offset, values in enumerate(rows):
+            for col_offset, value in enumerate(values):
+                _set_cell_value(
+                    ws.cell(row=start_row + row_offset,
+                            column=start_col + col_offset), value)
+            written += 1
+        return written
+
     def write_row(self, sheet: str, row: int, values: Sequence[object]) -> None:
         ws = self._ws(sheet)
         for offset, value in enumerate(values, start=1):
             _set_cell_value(ws.cell(row=row, column=offset), value)
 
     def write_rows(self, sheet: str, start_row: int, rows: Iterable[Sequence[object]]) -> int:
+        # Resolve the worksheet once: ``write_row`` would look it up again for
+        # every row, which is pure overhead on large tables.
         ws = self._ws(sheet)
         written = 0
-        for i, row_values in enumerate(rows):
-            self.write_row(sheet, start_row + i, row_values)
+        for row_offset, row_values in enumerate(rows):
+            for col_offset, value in enumerate(row_values, start=1):
+                _set_cell_value(
+                    ws.cell(row=start_row + row_offset, column=col_offset), value)
             written += 1
         return written
 
@@ -431,9 +481,14 @@ class ExcelComEngine(SpreadsheetEngine):
             _set_com_value(ws.Cells(row, offset), value)
 
     def write_rows(self, sheet: str, start_row: int, rows: Iterable[Sequence[object]]) -> int:
+        # A COM worksheet lookup costs a round trip; resolve it once instead of
+        # once per row (``write_row`` did that).
+        ws = self._ws(sheet)
         written = 0
-        for i, row_values in enumerate(rows):
-            self.write_row(sheet, start_row + i, row_values)
+        for row_offset, row_values in enumerate(rows):
+            for col_offset, value in enumerate(row_values, start=1):
+                _set_com_value(
+                    ws.Cells(start_row + row_offset, col_offset), value)
             written += 1
         return written
 

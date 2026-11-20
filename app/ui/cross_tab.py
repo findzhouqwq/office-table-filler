@@ -221,9 +221,14 @@ class CrossTab(QWidget):
             self.preview_table.setRowCount(min(len(self.records), 200))
             self.preview_table.setColumnCount(len(self.headers))
             self.preview_table.setHorizontalHeaderLabels(self.headers)
-            for r, record in enumerate(self.records[:200]):
-                for c, head in enumerate(self.headers):
-                    self.preview_table.setItem(r, c, QTableWidgetItem(str(record.get(head, ""))))
+            self.preview_table.setUpdatesEnabled(False)
+            try:
+                for r, record in enumerate(self.records[:200]):
+                    for c, head in enumerate(self.headers):
+                        self.preview_table.setItem(
+                            r, c, QTableWidgetItem(str(record.get(head, ""))))
+            finally:
+                self.preview_table.setUpdatesEnabled(True)
         self.status_label.setText(f"源数据：{len(self.records)} 行 / {len(self.headers)} 列。")
 
     def _inspect_targets(self) -> None:

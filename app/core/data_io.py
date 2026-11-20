@@ -121,13 +121,19 @@ def load_spreadsheet(path: str, sheet: str = "", header_row: int = 1,
             raise DataError(f"找不到工作表：{target}")
         header_row = max(1, int(header_row or 1))
         max_row, max_col = eng.dims(target)
-        headers: list[str] = []
-        for c in range(1, max_col + 1):
-            value = eng.cell_value(target, f"{_col_letter(c)}{header_row}")
-            headers.append(clean_text(value) or f"列{c}")
+        if max_col <= 0:
+            return TableData([], [], path)
+        # Read the header and body in a single bulk call.  The previous
+        # per-cell ``cell_value`` loop re-resolved the worksheet and parsed a
+        # coordinate string for every cell, which dominates load time for large
+        # sheets on low-end machines.
+        end_row = max(max_row, header_row)
+        grid = eng.read_block(target, header_row, 1, end_row, max_col)
+        header_cells = grid[0] if grid else []
+        headers = [clean_text(value) or f"列{c}"
+                   for c, value in enumerate(header_cells, start=1)]
         rows: list[list[object]] = []
-        for r in range(header_row + 1, max_row + 1):
-            row = [eng.cell_value(target, f"{_col_letter(c)}{r}") for c in range(1, max_col + 1)]
+        for row in grid[1:]:
             if all(v is None or str(v).strip() == "" for v in row):
                 continue
             rows.append(row)
@@ -251,19 +257,3 @@ def load_pptx(path: str) -> PptxModel:
     return model
 
 
-# ---------------------------------------------------------------------------
-# Column letter helper (avoid importing openpyxl at module import time)
-# ---------------------------------------------------------------------------
-
-_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-
-def _col_letter(index: int) -> str:
-    index = int(index)
-    if index <= 0:
-        raise DataError(f"列号必须为正数：{index}")
-    result = ""
-    while index > 0:
-        index, rem = divmod(index - 1, 26)
-        result = _LETTERS[rem] + result
-    return result

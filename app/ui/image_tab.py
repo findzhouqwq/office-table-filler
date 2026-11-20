@@ -332,9 +332,15 @@ class ImageTab(QWidget):
             return
         self.preview_table.setRowCount(len(matrix))
         self.preview_table.setColumnCount(len(matrix[0]))
-        for r, row in enumerate(matrix):
-            for c, value in enumerate(row):
-                self.preview_table.setItem(r, c, QTableWidgetItem(clean_text(value)))
+        # Filling thousands of cells while repainting each insert is very slow
+        # with software rendering; paint once at the end instead.
+        self.preview_table.setUpdatesEnabled(False)
+        try:
+            for r, row in enumerate(matrix):
+                for c, value in enumerate(row):
+                    self.preview_table.setItem(r, c, QTableWidgetItem(clean_text(value)))
+        finally:
+            self.preview_table.setUpdatesEnabled(True)
 
     def _on_fail(self, message: str) -> None:
         self.status_label.setText("识别失败。")

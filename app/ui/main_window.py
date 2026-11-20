@@ -188,8 +188,6 @@ class MainWindow(QMainWindow):
         path = info["path"]
         header_row = info["header_row"]
         try:
-            from openpyxl.utils import get_column_letter
-
             from ..core.spreadsheet import OpenpyxlEngine
             from ..core.utils import clean_text
 
@@ -201,13 +199,9 @@ class MainWindow(QMainWindow):
                     return []
                 sheet = engine.sheet_name(info["sheet"])
                 _, max_col = engine.dims(sheet)
-                headers: list[str] = []
-                for col in range(1, max_col + 1):
-                    value = clean_text(engine.cell_value(
-                        sheet, f"{get_column_letter(col)}{header_row}"))
-                    if value:
-                        headers.append(value)
-                return headers
+                row = engine.read_block(sheet, header_row, 1, header_row, max_col)
+                return [value for value in (
+                    clean_text(cell) for cell in (row[0] if row else [])) if value]
             finally:
                 engine.close()
         except Exception:  # noqa: BLE001 - fall back to manual field entry

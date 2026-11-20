@@ -68,10 +68,11 @@ def _target_info(path: str, sheet: str, header_row: int) -> tuple[list[str], dic
                 raise AppError(f"找不到工作表：{target}")
             target = lowered[target.lower()]
         _, max_col = engine.dims(target)
+        row = engine.read_block(target, header_row, 1, header_row, max_col)
         display: list[str] = []
         header_map: dict[str, str] = {}
-        for col in range(1, max_col + 1):
-            value = clean_text(engine.cell_value(target, f"{get_column_letter(col)}{header_row}"))
+        for col, raw in enumerate(row[0] if row else [], start=1):
+            value = clean_text(raw)
             if not value:
                 continue
             display.append(value)
@@ -93,11 +94,14 @@ def _string_rows(rows: list[list[object]]) -> list[list[str]]:
 
 
 def _trim(result: PreviewResult) -> PreviewResult:
-    result.total_rows = len(result.rows)
+    if not result.total_rows:
+        result.total_rows = len(result.rows)
     if len(result.rows) > MAX_PREVIEW_ROWS:
         result.rows = result.rows[:MAX_PREVIEW_ROWS]
+    if result.total_rows > len(result.rows):
         result.truncated = True
-        result.details.append(f"仅显示前 {MAX_PREVIEW_ROWS} 行，执行时会处理全部 {result.total_rows} 行。")
+        result.details.append(
+            f"仅显示前 {len(result.rows)} 行，执行时会处理全部 {result.total_rows} 行。")
     return result
 
 
@@ -207,13 +211,19 @@ def build_text_preview(request) -> PreviewResult:
         result.issues.extend(validate_field_plan(plan, header_map))
 
     width = max(len(display), len(plan), 1)
+    total = 0
     for record in records:
         try:
             row = _row_values_from_plan(plan, record, header_map, width)
         except AppError as exc:
             result.issues.error(str(exc))
             break
-        result.rows.append([clean_text(v) for v in row])
+        total += 1
+        # Keep validating every row, but only retain what the preview shows:
+        # a 50k-row CSV must not build 50k preview rows in memory.
+        if len(result.rows) < MAX_PREVIEW_ROWS:
+            result.rows.append([clean_text(v) for v in row])
+    result.total_rows = total
     result.headers = _make_headers(display, width)
     result.rows = [row + [""] * (width - len(row)) for row in result.rows]
     result.summary = f"源数据 {len(records)} 行，目标 {len(plan)} 列，将追加/写入到 "
@@ -238,7 +248,9 @@ def build_cross_preview(request) -> PreviewResult:
     records = sources.as_records()
     result.issues.extend(validate_cross_request(request, sources.headers, records))
     result.headers = list(sources.headers)
-    result.rows = _string_rows([list(row) for row in sources.rows])
+    # Only materialise the rows the dialog can show.
+    result.rows = _string_rows(
+        [list(row) for row in sources.rows[:MAX_PREVIEW_ROWS]])
     result.total_rows = len(records)
 
     details: list[str] = []

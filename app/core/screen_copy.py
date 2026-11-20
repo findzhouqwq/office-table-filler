@@ -18,8 +18,10 @@ from typing import Sequence
 from .errors import AppError, FillError
 
 #: A selection larger than this is almost certainly a stray drag over a whole
-#: column; refuse it instead of transferring millions of cells over COM.
-MAX_BLOCK_CELLS = 200_000
+#: column; refuse it instead of transferring millions of cells over COM.  The
+#: limit also keeps memory and the openpyxl write time reasonable on low-end
+#: office PCs (50k cells is already a large clipboard).
+MAX_BLOCK_CELLS = 50_000
 
 _MAX_CELL_TEXT = 32767
 _MAX_EXCEL_ROW = 1048576
@@ -220,64 +222,71 @@ def read_screen_rect(left: int, top: int, right: int, bottom: int) -> CopyBlock:
     top, bottom = sorted((int(top), int(bottom)))
     com = _com_initialize()
     try:
-        app = _active_application()
-        try:
-            window = app.ActiveWindow
-        except Exception as exc:  # pragma: no cover - Windows only
-            raise ScreenCopyError("当前表格窗口不可用，请先激活要复制的表格。") from exc
-
-        try:
-            start = window.RangeFromPoint(left, top)
-            end = window.RangeFromPoint(right, bottom)
-        except Exception as exc:  # pragma: no cover - WPS may not support it
-            raise ScreenCopyError(
-                "当前程序不支持按屏幕位置读取单元格；WPS 请改用"
-                " Microsoft Excel 后再框选。") from exc
-        if start is None or end is None:
-            raise ScreenCopyError(
-                "框选区域没有落在单元格上，请选中表格内的单元格区域。")
-
-        try:
-            sheet = start.Worksheet
-            sheet_name = str(sheet.Name)
-            try:
-                source_path = str(sheet.Parent.FullName or "")
-            except Exception:
-                source_path = ""
-            try:
-                source_app = str(app.Name or "")
-            except Exception:
-                source_app = ""
-        except Exception as exc:  # pragma: no cover - Windows only
-            raise ScreenCopyError("无法读取选区所在的工作表。") from exc
-
-        row1, col1 = int(start.Row), int(start.Column)
-        row2, col2 = int(end.Row), int(end.Column)
-        row1, row2 = sorted((row1, row2))
-        col1, col2 = sorted((col1, col2))
-        rows = row2 - row1 + 1
-        columns = col2 - col1 + 1
-        if rows * columns > MAX_BLOCK_CELLS:
-            raise ScreenCopyError(
-                f"选区包含 {rows} 行 × {columns} 列，超过 "
-                f"{MAX_BLOCK_CELLS} 个单元格，请缩小框选范围。")
-
-        address = f"{_column_letter(col1)}{row1}:{_column_letter(col2)}{row2}"
-        try:
-            cell_range = sheet.Range(sheet.Cells(row1, col1),
-                                     sheet.Cells(row2, col2))
-            raw = cell_range.Value
-        except Exception as exc:  # pragma: no cover - Windows only
-            raise ScreenCopyError(f"读取选区 {address} 失败：{exc}") from exc
-
-        values = normalize_range_values(raw)
-        return CopyBlock(values, source_path, sheet_name, address, source_app)
+        # Keep all COM proxies inside this call: the frame is gone before
+        # CoUninitialize runs, so no interface pointer outlives the apartment.
+        return _read_screen_rect(left, top, right, bottom)
     finally:
         if com is not None:
             try:
                 com.CoUninitialize()
             except Exception:
                 pass
+
+
+def _read_screen_rect(left: int, top: int, right: int,
+                      bottom: int) -> CopyBlock:
+    app = _active_application()
+    try:
+        window = app.ActiveWindow
+    except Exception as exc:  # pragma: no cover - Windows only
+        raise ScreenCopyError("当前表格窗口不可用，请先激活要复制的表格。") from exc
+
+    try:
+        start = window.RangeFromPoint(left, top)
+        end = window.RangeFromPoint(right, bottom)
+    except Exception as exc:  # pragma: no cover - WPS may not support it
+        raise ScreenCopyError(
+            "当前程序不支持按屏幕位置读取单元格；WPS 请改用"
+            " Microsoft Excel 后再框选。") from exc
+    if start is None or end is None:
+        raise ScreenCopyError(
+            "框选区域没有落在单元格上，请选中表格内的单元格区域。")
+
+    try:
+        sheet = start.Worksheet
+        sheet_name = str(sheet.Name)
+        try:
+            source_path = str(sheet.Parent.FullName or "")
+        except Exception:
+            source_path = ""
+        try:
+            source_app = str(app.Name or "")
+        except Exception:
+            source_app = ""
+    except Exception as exc:  # pragma: no cover - Windows only
+        raise ScreenCopyError("无法读取选区所在的工作表。") from exc
+
+    row1, col1 = int(start.Row), int(start.Column)
+    row2, col2 = int(end.Row), int(end.Column)
+    row1, row2 = sorted((row1, row2))
+    col1, col2 = sorted((col1, col2))
+    rows = row2 - row1 + 1
+    columns = col2 - col1 + 1
+    if rows * columns > MAX_BLOCK_CELLS:
+        raise ScreenCopyError(
+            f"选区包含 {rows} 行 × {columns} 列，超过 "
+            f"{MAX_BLOCK_CELLS} 个单元格，请分几次框选。")
+
+    address = f"{_column_letter(col1)}{row1}:{_column_letter(col2)}{row2}"
+    try:
+        cell_range = sheet.Range(sheet.Cells(row1, col1),
+                                 sheet.Cells(row2, col2))
+        raw = cell_range.Value
+    except Exception as exc:  # pragma: no cover - Windows only
+        raise ScreenCopyError(f"读取选区 {address} 失败：{exc}") from exc
+
+    values = normalize_range_values(raw)
+    return CopyBlock(values, source_path, sheet_name, address, source_app)
 
 
 # ---------------------------------------------------------------------------
@@ -328,8 +337,6 @@ def append_blocks(path: str, blocks: Sequence[CopyBlock], sheet: str = "",
     the target's existing rows and formatting are left untouched.  The file is
     saved atomically with a timestamped backup.
     """
-    from openpyxl.utils import get_column_letter
-
     from .errors import EngineError
     from .field_detect import avoid_merged_rows, last_data_row
     from .spreadsheet import OpenpyxlEngine
@@ -365,19 +372,26 @@ def append_blocks(path: str, blocks: Sequence[CopyBlock], sheet: str = "",
         row = avoid_merged_rows(ws, row, min_col, max_col)
         start_row = row
 
+        widest = max(block.width for block in usable)
+        if min_col + widest - 1 > _MAX_EXCEL_COLUMN:
+            raise FillError("复制的数据列数超过 Excel 上限，请缩小框选范围。")
+        # Validate every block before touching the workbook so a bad cell
+        # cannot leave a half-written in-memory sheet behind.
+        prepared: list[tuple[tuple[object, ...], ...]] = []
+        next_row = row
         for block in usable:
-            for values in block.rows:
-                if row > _MAX_EXCEL_ROW:
-                    raise FillError("目标工作表已写满，无法再追加数据。")
-                for offset, value in enumerate(values):
-                    column = min_col + offset
-                    if column > _MAX_EXCEL_COLUMN:
-                        raise FillError(
-                            "复制的数据列数超过 Excel 上限，请缩小框选范围。")
-                    cell = f"{get_column_letter(column)}{row}"
-                    engine.write_value(sheet_name, cell,
-                                       _clean_cell(value, block.address or cell))
-                row += 1
+            # Accumulate so several blocks cannot each pass a check that only
+            # looks at the first block's start row.
+            if next_row + block.height - 1 > _MAX_EXCEL_ROW:
+                raise FillError("目标工作表已写满，无法再追加数据。")
+            prepared.append(tuple(
+                tuple(_clean_cell(value, block.address) for value in values)
+                for values in block.rows))
+            next_row += block.height
+
+        for rows in prepared:
+            engine.write_block(sheet_name, row, min_col, rows)
+            row += len(rows)
 
         warnings: list[str] = []
         try:

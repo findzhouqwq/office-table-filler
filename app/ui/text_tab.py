@@ -205,12 +205,9 @@ class TextTab(QWidget):
             sheet = self.sheet_combo.currentText()
             _, max_col = eng.dims(sheet)
             header_row = max(1, self.header_spin.value())
-            from openpyxl.utils import get_column_letter
-            headers = []
-            for col in range(1, max_col + 1):
-                value = clean_text(eng.cell_value(sheet, f"{get_column_letter(col)}{header_row}"))
-                if value:
-                    headers.append(value)
+            row = eng.read_block(sheet, header_row, 1, header_row, max_col)
+            headers = [value for value in (
+                clean_text(cell) for cell in (row[0] if row else [])) if value]
             self.target_header_edit.setPlainText("、".join(headers))
         except Exception as exc:
             show_error(self, "无法读取表格", str(exc))
@@ -325,7 +322,11 @@ class TextTab(QWidget):
         if not request.records and not request.text.strip():
             show_error(self, "缺少数据", "请添加来源文件或粘贴文本。")
             return
-        result = build_text_preview(request)
+        try:
+            result = build_text_preview(request)
+        except Exception as exc:  # noqa: BLE001 - preview must not crash the UI
+            show_error(self, "预览失败", str(exc))
+            return
         self.status_label.setText(
             f"预览完成：{result.total_rows} 行，"
             f"{len(result.issues.errors)} 个错误 / {len(result.issues.warnings)} 个提示。")
@@ -392,7 +393,11 @@ class TextTab(QWidget):
         except AppError as exc:
             show_error(self, "读取模板失败", str(exc))
             return
-        self._apply_template_data(template.data)
+        try:
+            self._apply_template_data(template.data)
+        except Exception as exc:  # noqa: BLE001 - imported JSON is untrusted
+            show_error(self, "应用模板失败", f"模板内容有误：{exc}")
+            return
         self.status_label.setText(f"已应用模板：{name}")
 
     def on_before_close(self) -> bool:

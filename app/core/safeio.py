@@ -24,7 +24,7 @@ _BACKUP_DIR_CACHE: dict[str, str] = {}
 _PROBE_CACHE: dict[str, bool] = {}
 
 
-def _probe_cache(directory: str) -> bool:
+def probe_cache(directory: str) -> bool:
     """Cached :func:`_write_probe` — never probe the same folder twice."""
     key = os.path.abspath(directory)
     if key not in _PROBE_CACHE:
@@ -160,7 +160,7 @@ def atomic_write(target: str, writer: Callable[[str], None]) -> str:
     directory = os.path.dirname(target)
     suffix = os.path.splitext(target)[1] or ".tmp"
 
-    if directory and _probe_cache(directory):
+    if directory and probe_cache(directory):
         fd, tmp = tempfile.mkstemp(prefix=".tablefiller-", suffix=suffix, dir=directory)
         os.close(fd)
         try:

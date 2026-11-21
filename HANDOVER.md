@@ -1,6 +1,7 @@
 # 交接文档：表格批量填写工具（Windows GUI）
 
-> 面向接手维护的人。先看「快速开始」，再看「架构」和「扩展点」。
+> 面向接手维护的人。先读 `AGENTS.md`（协作约定、命令、分层规则、已知坑），
+> 再看本文件的「架构」与「扩展点」。
 
 ## 1. 这是什么
 
@@ -23,6 +24,7 @@
 | 生成前预览 / 校验 | 先展示将写入的行、目标列和问题清单，有错误时禁止执行 |
 | 自动备份 / 安全输出 | 覆盖前生成 `文件名.bak-时间戳`，写入走临时文件 + 原子替换 |
 | PDF / 扫描件 | 图片页可直接选 PDF 逐页渲染后 OCR；文字 / 跨文件页支持带文字层 PDF |
+| 侧边填表助手 | 贴屏幕右缘的常驻面板：剪贴板一键识别、直接追加、字段速填、跨文件框选复制 |
 | 图形化安装程序 | 无控制台向导，自动下载程序与依赖，镜像失败自动回退 |
 
 ## 2. 快速开始
@@ -87,8 +89,13 @@ python demo.py
 python -m unittest discover -s tests -v
 ```
 
-共 65 个用例：工具函数、列映射、目标解析、表格引擎、三种填表、模板、校验、预览、安全写入、PDF、GUI 冒烟。
-OCR 集成用例在缺少 `rapidocr-onnxruntime` 时自动跳过。
+Linux / CI（无显示器）下：
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests
+```
+
+当前基线 **122 个通过、5 个跳过**。OCR / Windows 相关用例在缺少对应依赖时自动跳过。
 
 ## 3. 架构
 
@@ -98,6 +105,11 @@ office-table-filler/
 ├── make_samples.py         生成演示样例
 ├── demo.py                 三种填表方式的端到端演示
 ├── run.bat / build.bat     一键运行 / 打包
+├── requirements.txt
+├── AGENTS.md               编码助手协作约定
+├── README.md               用户手册
+├── CHANGELOG.md            版本更新报告
+├── HANDOVER.md             本文件
 ├── installer/              图形化安装程序
 │   ├── TableFillerSetup.ps1   WinForms 五页向导（校验 / 下载 / 依赖 / VC++ / 快捷方式 / 卸载）
 │   ├── Install.vbs            无命令框启动向导
@@ -105,7 +117,6 @@ office-table-filler/
 │   ├── sign-setup.bat         signtool 代码签名
 │   ├── sign-release.ps1       生成 app-<版本>.zip + 签名清单
 │   └── TableFiller.ico        安装程序图标
-├── requirements.txt
 ├── app/
 │   ├── core/               引擎层（与 UI 无关，可单独调用）
 │   │   ├── spreadsheet.py  表格引擎：openpyxl 直接读写 + Excel/WPS COM
@@ -114,6 +125,8 @@ office-table-filler/
 │   │   ├── table_detect.py OpenCV 表格线检测 + 词聚类
 │   │   ├── mapping.py      字段提取规则 + 列匹配
 │   │   ├── targets.py      跨文件目标位置解析（紧凑字符串）
+│   │   ├── field_detect.py 剪贴板字段识别（纯规则，无第三方依赖）
+│   │   ├── screen_copy.py  屏幕框选读取 + 多块追加写入（Windows COM）
 │   │   ├── filler.py       三种填表方式的编排（核心）
 │   │   ├── templates.py    模板保存 / 读取 / 导入导出
 │   │   ├── validation.py   执行前校验
@@ -129,6 +142,8 @@ office-table-filler/
 │       ├── image_tab.py    图片识别填表
 │       ├── text_tab.py     文字填表
 │       ├── cross_tab.py    跨文件填表
+│       ├── side_panel.py   侧边填表助手（含跨文件框选复制）
+│       ├── screen_select.py 全屏透明框选覆盖层（绿色橡皮筋）
 │       ├── template_bar.py 模板工具栏
 │       ├── preview_dialog.py 预览 / 校验对话框
 │       ├── mapping_widgets.py  规则/映射表格控件
@@ -167,7 +182,7 @@ office-table-filler/
   - Word 占位符：`{{姓名}}`（正文里写 `{{姓名}}`）
   - PPT 单元格：`slide=0,table=0,row=1,col=1`
 
-  按目标文件扩展名过滤映射（`_KIND_EXTENSIONS`），互不兼容的目标自动跳过。
+  按目标文件扩展名过滤映射（`models.KIND_EXTENSIONS`），互不兼容的目标自动跳过。
 
 - **批量语义**：
   - `batch_by_row=True`：每个源记录生成一份目标文件（`template_001.docx` 等）。
@@ -183,7 +198,7 @@ office-table-filler/
      （AppData，再退回临时目录）」，任一成功即返回；
   2. `save_with_backup()` 在备份失败时**不抛错**，只把提示追加到 `warnings`，
      保存继续执行；
-  3. `atomic_write()` 先用 `_probe_cache()` 探测目录可写性，不可写时改在系统临时
+  3. `atomic_write()` 先用 `probe_cache()` 探测目录可写性，不可写时改在系统临时
      目录构建文件，再用 `shutil.copyfileobj` 覆盖目标；
   4. `_write_probe()` **必须用内建 `open()`**，不要用 `tempfile.mkstemp()`——
      在被拦截的目录上 `mkstemp` 会无限挂起而不是抛异常（实测）；
@@ -192,6 +207,12 @@ office-table-filler/
 
 - **模板存储**：默认在用户配置目录（Windows `%APPDATA%\TableFiller\templates`），
   可用环境变量 `TABLE_FILLER_HOME` 覆盖，便于测试或多套配置隔离。
+
+- **低端机性能约定**：
+  - 自绘控件（框选覆盖层、侧边栏）只重绘脏区，缓存 `QColor/QPen/QFont`；
+  - 大面积读写用 `read_block()` / `write_block()` / `write_rows()`，不要逐单元格解析坐标；
+  - 批量填充 `QTableWidget` 时先 `setUpdatesEnabled(False)`，结束再恢复；
+  - 预览只保留前 200 行；复制缓冲有块数/单元格上限，避免占满内存。
 
 ### 3.3 界面与主题
 
@@ -220,6 +241,7 @@ office-table-filler/
 | 任务栏未自动固定 | Windows 10/11 限制较多；从开始菜单右键程序选择“固定到任务栏”即可。 |
 | 安装后启动无反应 | 查看安装目录下 `.venv\Scripts\python.exe` 是否存在；必要时删除安装目录重新安装。 |
 | 报错「无法创建备份文件：Permission denied」/「输出目录不可写」 | 目标在 Desktop、Documents 等受保护目录，被「受控文件夹访问」或安全软件拦截。把文件移到普通目录（如 `D:\表格`），或在 Windows 安全中心关闭「受控文件夹访问」后重试。备份已能自动兜底到 AppData/临时目录，仍报错说明连目标文件本身都无法覆盖。 |
+| 跨文件粘贴时提示无法保存 | 目标文件正被 Excel / WPS 打开。先关闭目标文件，或在主界面把输出路径设为另一个文件后再粘贴。 |
 
 ## 5. 已知限制
 
@@ -228,6 +250,8 @@ office-table-filler/
 - Word/PPT 表格行追加依赖 python-docx / python-pptx；复杂模板请在目标程序中复核。
 - `.xls`（旧版二进制）不支持，请另存为 `.xlsx`。
 - COM 引擎需要已安装 Office 或 WPS，且未在本机验证（本机未装 Office）。
+- 跨文件框选复制仅支持 Windows，且需要正在运行的可见 Excel / WPS；
+  WPS 若不支持 `RangeFromPoint` 会提示改用 Microsoft Excel。
 
 ## 6. 扩展点（建议的下一步）
 
@@ -254,7 +278,11 @@ git push origin main
 - 已安装 gh：`gh auth login --web`，用浏览器输入设备码完成授权；
 - 或为 https 远程配置个人访问令牌（PAT）。
 
-约定：正常 commit 叠加历史，**不使用 force push**，旧版本始终保留。
+约定：
+
+- 正常 commit 叠加历史，**不使用 force push**，旧版本始终保留。
+- **不要把 PAT、私钥等凭据写进仓库、脚本或文档**；只在当次明确授权的操作中临时使用，
+  用后尽快到 GitHub 设置里撤销并重新生成。
 
 `.gitignore` 已排除 `.venv/`、`demo_output/`、`samples/`、日志、临时文件，
 以及构建产物 `installer/TableFiller-Setup.exe`、`dist/`，仓库保持干净。
@@ -265,14 +293,14 @@ git push origin main
 
 ```powershell
 # 1. 提交要发布的代码（发布包来自 HEAD）
-git add . && git commit -m "release: v1.4.1" && git push origin main
+git add . && git commit -m "release: v1.4.2" && git push origin main
 
-# 2. 用私钥生成 app-1.4.1.zip + manifest-1.4.1.json + manifest-1.4.1.sig
+# 2. 用私钥生成 app-1.4.2.zip + manifest-1.4.2.json + manifest-1.4.2.sig
 $env:TABLEFILLER_SIGNING_KEY = 'D:\keys\tablefiller-signing.xml'
-pwsh -File installer\sign-release.ps1 -Version 1.4.1
+pwsh -File installer\sign-release.ps1 -Version 1.4.2
 
 # 3. 上传为 Release 资产（安装程序使用 releases/latest/download）
-gh release create v1.4.1 dist\app-1.4.1.zip dist\manifest-1.4.1.json dist\manifest-1.4.1.sig --title "v1.4.1" --notes "发布说明"
+gh release create v1.4.2 dist\app-1.4.2.zip dist\manifest-1.4.2.json dist\manifest-1.4.2.sig --title "v1.4.2" --notes "发布说明"
 ```
 
 资产名带版本号，避免 CDN / 镜像缓存把旧清单混进新版本；安装程序按自身版本号取对应文件。

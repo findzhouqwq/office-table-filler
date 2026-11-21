@@ -142,12 +142,12 @@ class BackupFallbackTests(unittest.TestCase):
 
         import app.core.safeio as safeio
 
-        real_probe = safeio._probe_cache
-        safeio._probe_cache = lambda directory: False
+        real_probe = safeio.probe_cache
+        safeio.probe_cache = lambda directory: False
         try:
             safeio.atomic_write(target, lambda tmp: self._write(tmp, "payload"))
         finally:
-            safeio._probe_cache = real_probe
+            safeio.probe_cache = real_probe
 
         with open(target, encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "payload")

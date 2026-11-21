@@ -598,7 +598,7 @@ def append_fields(path: str, values: dict[str, str], sheet: str = "",
             raise FillError(
                 "没有字段能与目标表头匹配，请先「读取表头」或检查字段名。")
 
-        ws = engine._ws(sheet_name)
+        ws = engine.worksheet(sheet_name)
         row = last_data_row(ws, header_row, min_col, max_col) + 1
         row = avoid_merged_rows(ws, row, min_col, max_col)
         if row > _MAX_EXCEL_ROW:

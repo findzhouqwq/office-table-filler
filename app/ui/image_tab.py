@@ -494,7 +494,11 @@ class ImageTab(QWidget):
         except AppError as exc:
             show_error(self, "读取模板失败", str(exc))
             return
-        self._apply_template_data(template.data)
+        try:
+            self._apply_template_data(template.data)
+        except Exception as exc:  # noqa: BLE001 - imported JSON is untrusted
+            show_error(self, "应用模板失败", f"模板内容有误：{exc}")
+            return
         self.status_label.setText(f"已应用模板：{name}")
 
     def on_before_close(self) -> bool:

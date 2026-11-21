@@ -79,6 +79,21 @@ class SpreadsheetTests(unittest.TestCase):
         eng.close()
         self.assertEqual(load_workbook(self.path)["数据"]["A7"].value, "赵六")
 
+    def test_worksheet_exposes_public_handle(self):
+        from openpyxl import Workbook
+        wb = Workbook()
+        wb.active.title = "数据"
+        wb.save(self.path)
+
+        eng = OpenpyxlEngine()
+        eng.open(self.path)
+        try:
+            ws = eng.worksheet("数据")
+            self.assertEqual(ws.title, "数据")
+            self.assertEqual(eng.worksheet().title, "数据")
+        finally:
+            eng.close()
+
     def test_load_spreadsheet_skips_blank_rows(self):
         from openpyxl import Workbook
 

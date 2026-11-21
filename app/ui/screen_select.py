@@ -314,6 +314,8 @@ class SelectionOverlay(QWidget):
         self.finished.emit(blocks, errors)
 
     def cancel(self) -> None:
+        if self._done:
+            return
         self._hold_timer.stop()
         self._done = True
         self.hide()

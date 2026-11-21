@@ -32,6 +32,11 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(loaded.data["target_path"], "a.xlsx")
         self.assertEqual(loaded.kind, "text")
 
+    def test_invalid_schema_raises_data_error(self):
+        with self.assertRaises(DataError):
+            templates.Template.from_dict(
+                {"schema": "abc", "kind": "text", "data": {}})
+
     def test_update_preserves_created(self):
         first = templates.save_template("模板", "image", {"mode": 0})
         second = templates.save_template("模板", "image", {"mode": 1})

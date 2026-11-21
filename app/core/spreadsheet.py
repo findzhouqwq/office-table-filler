@@ -92,6 +92,14 @@ class SpreadsheetEngine:
     def set_active(self, name: str) -> None:
         raise NotImplementedError
 
+    def worksheet(self, sheet: str = ""):
+        """Return the engine-specific worksheet object.
+
+        Core helpers that need merged-cell or direct cell access go through
+        this public method instead of reaching into the private ``_ws``.
+        """
+        raise NotImplementedError
+
     def dims(self, sheet: str = "") -> tuple[int, int]:
         raise NotImplementedError
 
@@ -250,6 +258,9 @@ class OpenpyxlEngine(SpreadsheetEngine):
 
     def _ws(self, sheet: str) -> Worksheet:
         return self._wb[self.sheet_name(sheet)]
+
+    def worksheet(self, sheet: str = "") -> Worksheet:
+        return self._ws(sheet)
 
     def dims(self, sheet: str = "") -> tuple[int, int]:
         ws = self._ws(sheet)
@@ -441,6 +452,9 @@ class ExcelComEngine(SpreadsheetEngine):
 
     def _ws(self, sheet: str):
         return self._wb.Worksheets(self.sheet_name(sheet))
+
+    def worksheet(self, sheet: str = ""):
+        return self._ws(sheet)
 
     def dims(self, sheet: str = "") -> tuple[int, int]:
         ws = self._ws(sheet)

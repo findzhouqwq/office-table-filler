@@ -115,13 +115,13 @@ def validate_output(output: str, source: str) -> ValidationResult:
 def writable_directory(directory: str) -> bool:
     """Return True when a new file can be created in *directory*.
 
-    Delegates to :func:`app.core.safeio._write_probe`, which deliberately uses
+    Delegates to :func:`app.core.safeio.probe_cache`, which deliberately uses
     a plain file create (not ``tempfile.mkstemp``): on folders blocked by
     Controlled Folder Access the latter can hang instead of raising.
     """
-    from .safeio import _probe_cache
+    from .safeio import probe_cache
 
-    return _probe_cache(directory)
+    return probe_cache(directory)
 
 
 def validate_target_file(path: str) -> ValidationResult:

@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 
 from . import pdf_io
 from .errors import AppError
-from .filler import (_default_plan, _entries_for_target, _merge_sources,
-                     _row_values_from_plan, _text_to_records, preview_image)
+from .filler import (default_plan, entries_for_target, merge_sources,
+                     preview_image, row_values_from_plan, text_to_records)
 from .mapping import extract_fields, parse_labeled_lines
 from .ocr import OcrEngine, get_ocr_engine
 from .utils import clean_text, norm_header
@@ -146,7 +146,7 @@ def build_image_preview(request, ocr_engine: OcrEngine | None = None) -> Preview
                 fields = extract_fields(ocr_result.text, request.extraction_rules)
                 if not fields and not request.extraction_rules:
                     fields = parse_labeled_lines(ocr_result.text)
-                row = _row_values_from_plan(request.column_plan, fields, header_map, width)
+                row = row_values_from_plan(request.column_plan, fields, header_map, width)
                 result.rows.append([clean_text(v) for v in row])
                 result.details.append(f"第{cursor}行 ← {name}")
             else:
@@ -155,10 +155,9 @@ def build_image_preview(request, ocr_engine: OcrEngine | None = None) -> Preview
                 if not matrix:
                     result.issues.warning(f"{name}：未识别到表格内容。")
                     continue
-                offset = 0
                 anchor = (request.anchor or "A1").strip().upper()
-                from .filler import _split_anchor
-                _, anchor_col = _split_anchor(anchor)
+                from .filler import split_anchor
+                _, anchor_col = split_anchor(anchor)
                 offset = anchor_col - 1
                 for row in matrix:
                     trimmed = [clean_text(v) for v in row]
@@ -194,7 +193,7 @@ def build_image_preview(request, ocr_engine: OcrEngine | None = None) -> Preview
 def build_text_preview(request) -> PreviewResult:
     result = PreviewResult(title="文字填表 · 预览")
     try:
-        records = _text_to_records(request)
+        records = text_to_records(request)
     except AppError as exc:
         result.issues.error(str(exc))
         return result
@@ -206,7 +205,7 @@ def build_text_preview(request) -> PreviewResult:
         display, header_map = [], {}
 
     result.issues.extend(validate_text_request(request, records, header_map))
-    plan = request.column_plan or _default_plan(records, header_map)
+    plan = request.column_plan or default_plan(records, header_map)
     if plan:
         result.issues.extend(validate_field_plan(plan, header_map))
 
@@ -214,7 +213,7 @@ def build_text_preview(request) -> PreviewResult:
     total = 0
     for record in records:
         try:
-            row = _row_values_from_plan(plan, record, header_map, width)
+            row = row_values_from_plan(plan, record, header_map, width)
         except AppError as exc:
             result.issues.error(str(exc))
             break
@@ -239,7 +238,7 @@ def build_text_preview(request) -> PreviewResult:
 def build_cross_preview(request) -> PreviewResult:
     result = PreviewResult(title="跨文件填表 · 预览")
     try:
-        sources = _merge_sources(request.source_paths, request.source_sheet,
+        sources = merge_sources(request.source_paths, request.source_sheet,
                                  max(1, request.source_header_row))
     except AppError as exc:
         result.issues.error(str(exc))
@@ -255,7 +254,7 @@ def build_cross_preview(request) -> PreviewResult:
 
     details: list[str] = []
     for target in request.target_paths:
-        entries = _entries_for_target(request.mappings, target)
+        entries = entries_for_target(request.mappings, target)
         if not entries:
             continue
         lower = target.lower()

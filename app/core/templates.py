@@ -103,7 +103,10 @@ class Template:
     def from_dict(cls, payload: dict, path: str = "") -> "Template":
         if not isinstance(payload, dict):
             raise DataError("模板文件格式不正确。")
-        version = int(payload.get("schema", 0) or 0)
+        try:
+            version = int(payload.get("schema", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise DataError("模板文件中的版本号无效。") from exc
         if version > SCHEMA_VERSION:
             raise DataError(
                 f"模板版本 {version} 高于当前程序支持的 {SCHEMA_VERSION}，请升级程序。")
@@ -192,7 +195,13 @@ def list_templates(kind: str = "") -> list[Template]:
         directory = _kind_dir(candidate)
         if not os.path.isdir(directory):
             continue
-        for entry in os.listdir(directory):
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            # Unreadable / permission-denied template folder must not stop the
+            # whole app from starting; just show the other kinds.
+            continue
+        for entry in entries:
             if not entry.lower().endswith(".json"):
                 continue
             path = os.path.join(directory, entry)

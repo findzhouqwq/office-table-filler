@@ -364,7 +364,7 @@ def append_blocks(path: str, blocks: Sequence[CopyBlock], sheet: str = "",
             raise FillError(
                 f"工作表「{sheet_name}」第 {header_row} 行没有表头。")
 
-        ws = engine._ws(sheet_name)
+        ws = engine.worksheet(sheet_name)
         row = last_data_row(ws, header_row, min_col, max_col) + 1
         if row == header_row + 1 and not _has_any_value(ws):
             # A completely empty sheet has no header to protect: start at A1.

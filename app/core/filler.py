@@ -96,7 +96,7 @@ def _col_letter(index: int) -> str:
     return result
 
 
-def _split_anchor(anchor: str) -> tuple[int, int]:
+def split_anchor(anchor: str) -> tuple[int, int]:
     match = re.match(r"^\$?([A-Za-z]{1,3})\$?(\d{1,7})$", anchor or "A1")
     if not match:
         raise FillError(f"非法起始单元格：{anchor}")
@@ -146,7 +146,7 @@ def _field_value(fields: dict, source: str):
     return ""
 
 
-def _row_values_from_plan(plan: list[FieldMapping], fields: dict,
+def row_values_from_plan(plan: list[FieldMapping], fields: dict,
                           header_map: dict[str, str], width: int) -> list[object]:
     """Build a row where ``plan[i]`` writes the matching source field."""
     slots: list[tuple[int, FieldMapping]] = []
@@ -175,7 +175,7 @@ def _row_values_from_plan(plan: list[FieldMapping], fields: dict,
     return row
 
 
-def _default_plan(records: list[dict], header_map: dict[str, str]) -> list[FieldMapping]:
+def default_plan(records: list[dict], header_map: dict[str, str]) -> list[FieldMapping]:
     """Map every detected header to the matching source field by name."""
     keys = list(records[0].keys()) if records else []
     by_norm = {norm_header(key): key for key in keys}
@@ -205,12 +205,12 @@ def fill_from_images(request: ImageFillRequest,
         try:
             sheet = request.sheet or engine.active()
             engine.set_active(sheet)
-            ws = engine._ws(sheet)
+            ws = engine.worksheet(sheet)
             if request.clear_sheet:
                 ws.delete_rows(1, ws.max_row)
                 ws.delete_cols(1, ws.max_column)
 
-            anchor_row, anchor_col = _split_anchor(request.anchor)
+            anchor_row, anchor_col = split_anchor(request.anchor)
             if request.append and anchor_row == 1 and anchor_col == 1:
                 max_row, _ = engine.dims(sheet)
                 anchor_row = max_row + 1 if max_row > 1 else 1
@@ -224,7 +224,7 @@ def fill_from_images(request: ImageFillRequest,
                     fields = extract_fields(result.text, request.extraction_rules)
                     if not fields and not request.extraction_rules:
                         fields = parse_labeled_lines(result.text)
-                    row = _row_values_from_plan(request.column_plan, fields, header_map, width)
+                    row = row_values_from_plan(request.column_plan, fields, header_map, width)
                     engine.write_row(sheet, cursor_row, row)
                     report.add(FillRecord(
                         target=f"{sheet}!{_col_letter(1)}{cursor_row}",
@@ -279,7 +279,8 @@ def fill_from_images(request: ImageFillRequest,
 # Feature 2: text fill
 # ---------------------------------------------------------------------------
 
-def _text_to_records(request: TextFillRequest) -> list[dict]:
+def text_to_records(request: TextFillRequest) -> list[dict]:
+    """Turn pasted text / a data file into normalised records."""
     if request.records:
         return list(request.records)
     if not request.text.strip():
@@ -297,7 +298,7 @@ def _text_to_records(request: TextFillRequest) -> list[dict]:
 
 def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = None) -> FillReport:
     report = FillReport(title="文字填表")
-    records = _text_to_records(request)
+    records = text_to_records(request)
     if not records:
         raise DataError("没有可填写的数据。")
     if not request.target_path or not os.path.exists(request.target_path):
@@ -308,7 +309,7 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
     try:
         sheet = request.sheet or eng.active()
         eng.set_active(sheet)
-        ws = eng._ws(sheet)
+        ws = eng.worksheet(sheet)
         if request.clear_sheet:
             ws.delete_rows(1, ws.max_row)
             ws.delete_cols(1, ws.max_column)
@@ -318,11 +319,11 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
             start_row = ws.max_row + 1 if ws.max_row > 1 else 1
         else:
             start_row = 1
-        plan = request.column_plan or _default_plan(records, header_map)
+        plan = request.column_plan or default_plan(records, header_map)
         width = max(width, len(plan))
         pending: list[list[object]] = []
         for offset, record in enumerate(records):
-            row = _row_values_from_plan(plan, record, header_map, width)
+            row = row_values_from_plan(plan, record, header_map, width)
             pending.append(row)
             report.add(FillRecord(
                 target=f"{sheet}!{_col_letter(1)}{start_row + offset}",
@@ -347,7 +348,8 @@ def fill_from_text(request: TextFillRequest, engine: OpenpyxlEngine | None = Non
 # Feature 3: cross-file fill
 # ---------------------------------------------------------------------------
 
-def _merge_sources(paths: list[str], sheet: str, header_row: int) -> TableData:
+def merge_sources(paths: list[str], sheet: str, header_row: int) -> TableData:
+    """Load several source files and union their headers into one table."""
     combined = TableData(source=";".join(paths))
     for path in paths:
         table = load_table(path, sheet=sheet, header_row=header_row)
@@ -500,7 +502,7 @@ def _find_table_shape(slide, table_index: int):
     return None
 
 
-def _entries_for_target(entries: list[MappingEntry], target: str) -> list[MappingEntry]:
+def entries_for_target(entries: list[MappingEntry], target: str) -> list[MappingEntry]:
     """Keep only the mappings that apply to *target*.
 
     A mapping applies when its target kind matches the file extension and its
@@ -551,7 +553,7 @@ def _apply_xlsx(path: str, output: str, entries: list[MappingEntry],
                     if not rows:
                         report.warn("没有可写入的行数据（_rows 为空）。")
                         continue
-                    start_row, _ = _split_anchor(ref.cell or "A1")
+                    start_row, _ = split_anchor(ref.cell or "A1")
                     written = eng.write_rows(target_sheet, start_row, rows)
                     report.add(FillRecord(target=ref.describe(), value=f"写入{written}行",
                                           source=entry.source, file=output))
@@ -595,7 +597,7 @@ def fill_cross_files(request: CrossFillRequest) -> FillReport:
     if not request.mappings:
         raise DataError("请至少添加一条字段映射。")
 
-    sources = _merge_sources(request.source_paths, request.source_sheet, request.source_header_row)
+    sources = merge_sources(request.source_paths, request.source_sheet, request.source_header_row)
     records = sources.as_records()
     if not records:
         raise DataError("源文件没有数据行。")
@@ -610,7 +612,7 @@ def fill_cross_files(request: CrossFillRequest) -> FillReport:
     if request.dry_run:
         planned: list[str] = []
         for target in request.target_paths:
-            entries = _entries_for_target(request.mappings, target)
+            entries = entries_for_target(request.mappings, target)
             if not entries:
                 planned.append(f"{os.path.basename(target)}（无映射，跳过）")
                 continue
@@ -630,7 +632,7 @@ def fill_cross_files(request: CrossFillRequest) -> FillReport:
     for target in request.target_paths:
         base = os.path.basename(target)
         lower = target.lower()
-        entries = _entries_for_target(request.mappings, target)
+        entries = entries_for_target(request.mappings, target)
         if not entries:
             report.warn(f"跳过 {base}：没有适用于该目标的映射。")
             continue
